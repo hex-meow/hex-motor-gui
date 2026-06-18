@@ -112,8 +112,8 @@ const PAD_ENTRY: TpdoEntry = TpdoEntry {
 pub const DEFAULT_MAX_TORQUE_PERMILLE: u16 = 800;
 pub const DEFAULT_MAX_LINEAR_MPS: f64 = 3.0;
 pub const DEFAULT_MAX_ANGULAR_RPS: f64 = 3.0;
-/// Default MIT velocity gain (Nm·s/rad). Conservative starting point; tune live.
-pub const DEFAULT_KD_SI: f64 = 0.1;
+/// Default MIT velocity gain (Nm·s/rad). Tune live.
+pub const DEFAULT_KD_SI: f64 = 1.0;
 
 /// Default chassis acceleration limits (slew-rate limiting of the commanded
 /// twist). `0` = unlimited (instant). Linear bounds the velocity-*vector*

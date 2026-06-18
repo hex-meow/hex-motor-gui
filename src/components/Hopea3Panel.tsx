@@ -50,7 +50,7 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
   const [accLin, setAccLin] = useState(2);
   const [accAng, setAccAng] = useState(6);
   const [torque, setTorque] = useState<[number, number, number]>([800, 800, 800]);
-  const [kd, setKd] = useState<[number, number, number]>([0.1, 0.1, 0.1]);
+  const [kd, setKd] = useState<[number, number, number]>([1.0, 1.0, 1.0]);
 
   // Manual drive (keyboard / gamepad). Full deflection = these speeds.
   const [keyboardEnabled, setKeyboardEnabled] = useState(true);
@@ -342,6 +342,35 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
                 </Space>
               </Card>
 
+              <Card title={t("hopeMeasTwist")} size="small" style={{ marginTop: 16 }}>
+                <Row gutter={8}>
+                  <Col span={8}><Statistic title="vx (m/s)" value={fmt(state?.meas_vx)} /></Col>
+                  <Col span={8}><Statistic title="vy (m/s)" value={fmt(state?.meas_vy)} /></Col>
+                  <Col span={8}><Statistic title="ωz (rad/s)" value={fmt(state?.meas_wz)} /></Col>
+                </Row>
+              </Card>
+            </Col>
+
+            <Col xs={24} lg={14}>
+              <Card
+                title={t("hopeOdom")}
+                size="small"
+                extra={<Button size="small" onClick={() => { traj.current = []; setTrajVersion((v) => v + 1); api.hopea3ResetOdom().catch(() => {}); }}>{t("hopeResetOdom")}</Button>}
+              >
+                <TrajectoryChart
+                  points={traj.current}
+                  version={trajVersion}
+                  poseX={state?.pose_x ?? 0}
+                  poseY={state?.pose_y ?? 0}
+                  poseTheta={state?.pose_theta ?? 0}
+                  headingLabel={t("hopeHeading")}
+                  trajLabel={t("hopeTrajectory")}
+                />
+                <Typography.Text type="secondary">
+                  {t("hopePose")}: x={fmt(state?.pose_x)} m, y={fmt(state?.pose_y)} m, θ={fmt(state ? (state.pose_theta * 180) / Math.PI : null)}°
+                </Typography.Text>
+              </Card>
+
               <Card title={t("hopeLimits")} size="small" style={{ marginTop: 16 }}>
                 <Space wrap align="end">
                   <Labeled label={t("hopeMaxLinear")}>
@@ -398,35 +427,6 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
                     ))}
                   </Space>
                 </div>
-              </Card>
-
-              <Card title={t("hopeMeasTwist")} size="small" style={{ marginTop: 16 }}>
-                <Row gutter={8}>
-                  <Col span={8}><Statistic title="vx (m/s)" value={fmt(state?.meas_vx)} /></Col>
-                  <Col span={8}><Statistic title="vy (m/s)" value={fmt(state?.meas_vy)} /></Col>
-                  <Col span={8}><Statistic title="ωz (rad/s)" value={fmt(state?.meas_wz)} /></Col>
-                </Row>
-              </Card>
-            </Col>
-
-            <Col xs={24} lg={14}>
-              <Card
-                title={t("hopeOdom")}
-                size="small"
-                extra={<Button size="small" onClick={() => { traj.current = []; setTrajVersion((v) => v + 1); api.hopea3ResetOdom().catch(() => {}); }}>{t("hopeResetOdom")}</Button>}
-              >
-                <TrajectoryChart
-                  points={traj.current}
-                  version={trajVersion}
-                  poseX={state?.pose_x ?? 0}
-                  poseY={state?.pose_y ?? 0}
-                  poseTheta={state?.pose_theta ?? 0}
-                  headingLabel={t("hopeHeading")}
-                  trajLabel={t("hopeTrajectory")}
-                />
-                <Typography.Text type="secondary">
-                  {t("hopePose")}: x={fmt(state?.pose_x)} m, y={fmt(state?.pose_y)} m, θ={fmt(state ? (state.pose_theta * 180) / Math.PI : null)}°
-                </Typography.Text>
               </Card>
             </Col>
           </Row>
@@ -546,11 +546,16 @@ const TrajectoryChart = memo(function TrajectoryChart({
   const cy = (minY + maxY) / 2;
   const half = Math.max((maxX - minX) / 2, (maxY - minY) / 2, 0.5) * 1.15;
 
-  // Single heading arrow representing the robot: a short stick from the current
-  // position pointing along the heading, arrowhead only at the tip. Heading
-  // vector (cosθ,sinθ) in ROS maps to (-sinθ,cosθ) on screen.
-  const arrowLen = half * 0.28;
-  const tip = [rsx + arrowLen * -Math.sin(poseTheta), rsy + arrowLen * Math.cos(poseTheta)];
+  // Robot marker: a filled "navigation" arrow (Material e55d style) centred on
+  // the pose, pointing along the heading = the car's front. Built in data space
+  // (local forward/left → ROS world → screen) so the rotation is unambiguous —
+  // no reliance on ECharts symbolRotate semantics. Local verts (forward f,
+  // left l): tip, back-left, mid notch, back-right.
+  const arrowR = half * 0.16;
+  const ct = Math.cos(poseTheta), st = Math.sin(poseTheta);
+  const arrowPts = ([[1, 0], [-0.75, 0.62], [-0.4, 0], [-0.75, -0.62]] as [number, number][]).map(
+    ([f, l]) => toScreen(poseX + arrowR * (f * ct - l * st), poseY + arrowR * (f * st + l * ct))
+  );
 
   const fmtAxis = (v: number) => v.toFixed(2);
   const axisLine = { lineStyle: { color: "#3a414d" } };
@@ -573,7 +578,7 @@ const TrajectoryChart = memo(function TrajectoryChart({
     },
     tooltip: {
       trigger: "item",
-      formatter: (p: any) => `${fmtAxis(p.value[1])}, ${fmtAxis(-p.value[0])} m`,
+      formatter: (p: any) => (Array.isArray(p.value) ? `${fmtAxis(p.value[1])}, ${fmtAxis(-p.value[0])} m` : ""),
     },
     series: [
       {
@@ -585,12 +590,15 @@ const TrajectoryChart = memo(function TrajectoryChart({
       },
       {
         name: headingLabel,
-        type: "line",
-        symbol: ["none", "arrow"],
-        symbolSize: 16,
-        lineStyle: { width: 4, color: "#f39c12" },
-        itemStyle: { color: "#f39c12" },
-        data: [[rsx, rsy], tip],
+        type: "custom",
+        data: [0],
+        z: 5,
+        silent: true,
+        renderItem: (_params: any, api: any) => ({
+          type: "polygon",
+          shape: { points: arrowPts.map((p) => api.coord(p)) },
+          style: { fill: "#f39c12", stroke: "#11151c", lineWidth: 1 },
+        }),
       },
     ],
   };
