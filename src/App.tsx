@@ -8,10 +8,11 @@ import { Sidebar } from "./components/Sidebar";
 import { MotorDetail } from "./components/MotorDetail";
 import { ChangeIdTool } from "./components/ChangeIdTool";
 import { ZeroTool } from "./components/ZeroTool";
+import { Hopea3Panel } from "./components/Hopea3Panel";
 import { TutorialModal } from "./components/Tutorial";
 import type { MotorInfo } from "./types";
 
-type Tool = "control" | "changeId" | "zero";
+type Tool = "control" | "changeId" | "zero" | "hopea3";
 
 const DEVICE_POLL_MS = 700;
 
@@ -103,6 +104,13 @@ export default function App() {
   if (tool == null) return <ToolPicker onPick={setTool} />;
 
   const selected = devices.find((d) => d.node_id === selectedNid) ?? null;
+  const toolLabel =
+    tool === "control" ? t("toolControl")
+    : tool === "changeId" ? t("toolChangeId")
+    : tool === "zero" ? t("toolZero")
+    : t("toolHopeA3");
+  const needsHeartbeat = tool === "control" || tool === "hopea3";
+  const showSidebar = tool !== "hopea3";
 
   return (
     <Layout style={{ height: "100vh" }}>
@@ -119,9 +127,7 @@ export default function App() {
           <Typography.Title level={4} style={{ margin: 0, color: "#e6e8eb" }}>
             {t("appTitle")}
           </Typography.Title>
-          <Typography.Text type="secondary">
-            {tool === "control" ? t("toolControl") : tool === "changeId" ? t("toolChangeId") : t("toolZero")}
-          </Typography.Text>
+          <Typography.Text type="secondary">{toolLabel}</Typography.Text>
           <Button size="small" onClick={switchTool}>
             {t("switchTool")}
           </Button>
@@ -129,21 +135,25 @@ export default function App() {
         <ConnectBar
           connected={connected}
           onChange={onConnChange}
-          broadcastHeartbeat={tool === "control"}
+          broadcastHeartbeat={needsHeartbeat}
         />
       </Layout.Header>
       <Layout>
-        <Layout.Sider width={280} theme="dark" style={{ borderRight: "1px solid #262b35" }}>
-          <Sidebar
-            devices={devices}
-            selectedNid={selectedNid}
-            onSelect={setSelectedNid}
-            connected={connected}
-            tool={tool}
-          />
-        </Layout.Sider>
+        {showSidebar && (
+          <Layout.Sider width={280} theme="dark" style={{ borderRight: "1px solid #262b35" }}>
+            <Sidebar
+              devices={devices}
+              selectedNid={selectedNid}
+              onSelect={setSelectedNid}
+              connected={connected}
+              tool={tool as "control" | "changeId" | "zero"}
+            />
+          </Layout.Sider>
+        )}
         <Layout.Content style={{ padding: 16, overflow: "auto" }}>
-          {tool === "changeId" ? (
+          {tool === "hopea3" ? (
+            <Hopea3Panel connected={connected} />
+          ) : tool === "changeId" ? (
             <ChangeIdTool devices={devices} selectedNid={selectedNid} connected={connected} />
           ) : tool === "zero" ? (
             <ZeroTool devices={devices} selectedNid={selectedNid} connected={connected} />
@@ -200,28 +210,24 @@ function ToolPicker({ onPick }: { onPick: (t: Tool) => void }) {
       </Typography.Title>
       <Typography.Text type="secondary">{t("pickTool")}</Typography.Text>
 
-      <Space size={16} wrap style={{ justifyContent: "center", maxWidth: 920 }}>
-        <ToolCard
-          title={t("toolControl")}
-          desc={t("toolControlDesc")}
-          onClick={() => onPick("control")}
-        />
-        <ToolCard
-          title={t("toolChangeId")}
-          desc={t("toolChangeIdDesc")}
-          onClick={() => onPick("changeId")}
-        />
-        <ToolCard
-          title={t("toolZero")}
-          desc={t("toolZeroDesc")}
-          onClick={() => onPick("zero")}
-        />
-        <ToolCard
-          title={t("toolTutorial")}
-          desc={t("toolTutorialDesc")}
-          onClick={() => setTutorialOpen(true)}
-        />
-      </Space>
+      <div style={{ width: "100%", maxWidth: 920 }}>
+        <Typography.Text strong style={{ display: "block", marginBottom: 8 }}>
+          {t("catDirectControl")}
+        </Typography.Text>
+        <Space size={16} wrap style={{ justifyContent: "center", width: "100%" }}>
+          <ToolCard title={t("toolControl")} desc={t("toolControlDesc")} onClick={() => onPick("control")} />
+          <ToolCard title={t("toolChangeId")} desc={t("toolChangeIdDesc")} onClick={() => onPick("changeId")} />
+          <ToolCard title={t("toolZero")} desc={t("toolZeroDesc")} onClick={() => onPick("zero")} />
+        </Space>
+
+        <Typography.Text strong style={{ display: "block", margin: "24px 0 8px" }}>
+          {t("catRobotApp")}
+        </Typography.Text>
+        <Space size={16} wrap style={{ justifyContent: "center", width: "100%" }}>
+          <ToolCard title={t("toolHopeA3")} desc={t("toolHopeA3Desc")} onClick={() => onPick("hopea3")} />
+          <ToolCard title={t("toolTutorial")} desc={t("toolTutorialDesc")} onClick={() => setTutorialOpen(true)} />
+        </Space>
+      </div>
 
       <TutorialModal open={tutorialOpen} onClose={() => setTutorialOpen(false)} />
     </div>

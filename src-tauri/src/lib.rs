@@ -6,6 +6,7 @@
 mod backend;
 mod commands;
 mod dto;
+mod hopea3;
 mod logging;
 mod state;
 
@@ -39,6 +40,16 @@ pub fn run() {
             commands::get_status,
             commands::start_log,
             commands::stop_log,
+            commands::hopea3_start,
+            commands::hopea3_init_progress,
+            commands::hopea3_stop,
+            commands::hopea3_set_cmd,
+            commands::hopea3_set_max_torque,
+            commands::hopea3_set_kd,
+            commands::hopea3_set_limits,
+            commands::hopea3_clear_errors,
+            commands::hopea3_reset_odom,
+            commands::hopea3_get_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

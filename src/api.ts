@@ -3,7 +3,7 @@
 // snake_case parameters.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { LiveState, MotorInfo, MotorMode, MotorTarget } from "./types";
+import type { Hopea3InitProgress, Hopea3State, LiveState, MotorInfo, MotorMode, MotorTarget } from "./types";
 
 export const api = {
   connect: (iface: string, ourNid: number, broadcastHeartbeat: boolean) =>
@@ -37,6 +37,21 @@ export const api = {
 
   startLog: (nid: number) => invoke<string>("start_log", { nid }),
   stopLog: (nid: number) => invoke<void>("stop_log", { nid }),
+
+  // HopeA3 Robot Application
+  hopea3Start: () => invoke<void>("hopea3_start"),
+  hopea3InitProgress: () => invoke<Hopea3InitProgress>("hopea3_init_progress"),
+  hopea3Stop: () => invoke<void>("hopea3_stop"),
+  hopea3SetCmd: (vx: number, vy: number, wz: number) =>
+    invoke<void>("hopea3_set_cmd", { vx, vy, wz }),
+  hopea3SetMaxTorque: (permille: number[]) =>
+    invoke<void>("hopea3_set_max_torque", { permille }),
+  hopea3SetKd: (kdSi: number[]) => invoke<void>("hopea3_set_kd", { kdSi }),
+  hopea3SetLimits: (maxLinear: number, maxAngular: number) =>
+    invoke<void>("hopea3_set_limits", { maxLinear, maxAngular }),
+  hopea3ClearErrors: () => invoke<void>("hopea3_clear_errors"),
+  hopea3ResetOdom: () => invoke<void>("hopea3_reset_odom"),
+  hopea3GetState: () => invoke<Hopea3State>("hopea3_get_state"),
 };
 
 /** Normalise a thrown Tauri error (usually a plain string) to a message. */

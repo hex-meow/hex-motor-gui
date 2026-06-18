@@ -55,6 +55,10 @@ pub async fn connect(
 
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>) -> CmdResult<()> {
+    // Stop a running Robot Application first (disables its motors cleanly).
+    if let (Some(app), Some(mgr)) = (state.hopea3.lock().await.take(), state.manager().await) {
+        app.stop(&mgr).await;
+    }
     // Stop any running CSV recorders first so their files flush cleanly.
     for handle in state.drain_logs() {
         crate::logging::stop(handle).await;
@@ -216,4 +220,119 @@ pub async fn stop_log(state: State<'_, AppState>, nid: u8) -> CmdResult<()> {
         log::info!("stopped CSV log for nid 0x{nid:02X}");
     }
     Ok(())
+}
+
+// ───────────────────────── HopeA3 Robot Application ─────────────────────────
+
+/// Initialize the three HopeA3 motors and start the 500 Hz PV control loop.
+#[tauri::command]
+pub async fn hopea3_start(state: State<'_, AppState>) -> CmdResult<()> {
+    let mgr = manager(&state).await?;
+    let mut guard = state.hopea3.lock().await;
+    if guard.is_some() {
+        return Err("HopeA3 already running; stop it first".into());
+    }
+    let app = crate::hopea3::Hopea3::start(mgr, &state.hopea3_init)
+        .await
+        .map_err(err)?;
+    *guard = Some(app);
+    log::info!("HopeA3 started");
+    Ok(())
+}
+
+/// Poll init progress while `hopea3_start` runs (which motor / attempt).
+#[tauri::command]
+pub async fn hopea3_init_progress(
+    state: State<'_, AppState>,
+) -> CmdResult<crate::hopea3::InitProgress> {
+    Ok(state.hopea3_init.lock().unwrap().clone())
+}
+
+/// Stop the control loop and disable all HopeA3 motors. No-op if not running.
+#[tauri::command]
+pub async fn hopea3_stop(state: State<'_, AppState>) -> CmdResult<()> {
+    let app = state.hopea3.lock().await.take();
+    if let Some(app) = app {
+        let mgr = manager(&state).await?;
+        app.stop(&mgr).await;
+        log::info!("HopeA3 stopped");
+    }
+    Ok(())
+}
+
+/// Set the commanded body twist (m/s, m/s, rad/s). Clamped to limits, never errored.
+#[tauri::command]
+pub async fn hopea3_set_cmd(
+    state: State<'_, AppState>,
+    vx: f64,
+    vy: f64,
+    wz: f64,
+) -> CmdResult<()> {
+    if let Some(app) = state.hopea3.lock().await.as_ref() {
+        app.set_cmd(vx, vy, wz);
+    }
+    Ok(())
+}
+
+/// Set per-motor max torque (‰ of peak), indexed [motor1, motor2, motor3].
+#[tauri::command]
+pub async fn hopea3_set_max_torque(
+    state: State<'_, AppState>,
+    permille: [u16; 3],
+) -> CmdResult<()> {
+    if let Some(app) = state.hopea3.lock().await.as_ref() {
+        app.set_max_torque(permille);
+    }
+    Ok(())
+}
+
+/// Set per-motor MIT velocity gain KD (SI, Nm·s/rad), indexed [motor1,2,3].
+#[tauri::command]
+pub async fn hopea3_set_kd(state: State<'_, AppState>, kd_si: [f64; 3]) -> CmdResult<()> {
+    if let Some(app) = state.hopea3.lock().await.as_ref() {
+        app.set_kd(kd_si);
+    }
+    Ok(())
+}
+
+/// Adjust the velocity limits (max linear m/s magnitude, max angular rad/s).
+#[tauri::command]
+pub async fn hopea3_set_limits(
+    state: State<'_, AppState>,
+    max_linear: f64,
+    max_angular: f64,
+) -> CmdResult<()> {
+    if let Some(app) = state.hopea3.lock().await.as_ref() {
+        app.set_limits(max_linear, max_angular);
+    }
+    Ok(())
+}
+
+/// Clear CiA402 faults on all three HopeA3 motors (best-effort). Useful before
+/// starting if a previous run left them in a heartbeat-lost / fault state.
+#[tauri::command]
+pub async fn hopea3_clear_errors(state: State<'_, AppState>) -> CmdResult<()> {
+    let mgr = manager(&state).await?;
+    crate::hopea3::clear_errors(&mgr).await;
+    Ok(())
+}
+
+/// Reset the dead-reckoned odometry pose to the origin.
+#[tauri::command]
+pub async fn hopea3_reset_odom(state: State<'_, AppState>) -> CmdResult<()> {
+    if let Some(app) = state.hopea3.lock().await.as_ref() {
+        app.reset_odom();
+    }
+    Ok(())
+}
+
+/// Poll the current chassis state (pose, twist, per-motor status).
+#[tauri::command]
+pub async fn hopea3_get_state(
+    state: State<'_, AppState>,
+) -> CmdResult<crate::hopea3::Hopea3State> {
+    Ok(match state.hopea3.lock().await.as_ref() {
+        Some(app) => app.state(),
+        None => crate::hopea3::Hopea3State::default(),
+    })
 }

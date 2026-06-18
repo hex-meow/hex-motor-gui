@@ -71,6 +71,43 @@ export interface LiveState {
   measurements: Measurements;
 }
 
+// ── HopeA3 Robot Application (mirrors hopea3::Hopea3State / Hopea3Motor) ──
+export interface Hopea3Motor {
+  node_id: number;
+  online: boolean;
+  enabled: boolean;
+  target_rev_per_s: number;
+  velocity_rev_per_s: number | null;
+  torque_nm: number | null;
+  max_torque_permille: number;
+  driver_temp_c: number | null;
+  motor_temp_c: number | null;
+  error: string | null;
+}
+
+export interface Hopea3InitProgress {
+  active: boolean;
+  current: number;
+  total: number;
+  attempt: number;
+}
+
+export interface Hopea3State {
+  pose_x: number;
+  pose_y: number;
+  pose_theta: number;
+  meas_vx: number;
+  meas_vy: number;
+  meas_wz: number;
+  cmd_vx: number;
+  cmd_vy: number;
+  cmd_wz: number;
+  max_linear: number;
+  max_angular: number;
+  motors: Hopea3Motor[];
+  running: boolean;
+}
+
 // Tagged target union the backend deserializes (dto::MotorTargetDto).
 export type MotorTarget =
   | { kind: "Disable" }

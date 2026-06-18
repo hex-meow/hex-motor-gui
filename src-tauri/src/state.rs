@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use hex_motor::cia402::Cia402Manager;
 use tokio::sync::Mutex;
 
+use crate::hopea3::{Hopea3, InitProgress};
 use crate::logging::LogHandle;
 
 #[derive(Default)]
@@ -20,6 +21,12 @@ pub struct AppState {
     /// removed by `stop_log` / `disconnect`. A `std` mutex is fine: we only
     /// ever insert/remove under it, never await while holding it.
     pub logs: StdMutex<HashMap<u8, LogHandle>>,
+    /// The running HopeA3 Robot Application, if started. At most one at a time
+    /// (it owns the 500 Hz control loop on the single bus).
+    pub hopea3: Mutex<Option<Hopea3>>,
+    /// Live init progress for the UI to poll while `hopea3_start` runs. A `std`
+    /// mutex: only short, await-free updates happen under it.
+    pub hopea3_init: StdMutex<InitProgress>,
 }
 
 impl AppState {
