@@ -8,7 +8,9 @@ mod commands;
 mod dto;
 mod hopea3;
 mod logging;
+mod smartknob;
 mod state;
+mod zenoh_arm;
 mod zenoh_base;
 
 use state::AppState;
@@ -53,6 +55,13 @@ pub fn run() {
             commands::hopea3_reinit_motor,
             commands::hopea3_reset_odom,
             commands::hopea3_get_state,
+            commands::smartknob_configs,
+            commands::smartknob_start,
+            commands::smartknob_stop,
+            commands::smartknob_set_config,
+            commands::smartknob_set_tuning,
+            commands::smartknob_clear_error,
+            commands::smartknob_get_state,
             commands::zenoh_connect,
             commands::zenoh_disconnect,
             commands::zenoh_discover,
@@ -61,6 +70,15 @@ pub fn run() {
             commands::zenoh_set_cmd,
             commands::zenoh_get_state,
             commands::zenoh_release,
+            commands::arm_connect,
+            commands::arm_disconnect,
+            commands::arm_discover,
+            commands::arm_acquire,
+            commands::arm_set_mode,
+            commands::arm_set_gravity,
+            commands::arm_goto,
+            commands::arm_get_state,
+            commands::arm_release,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

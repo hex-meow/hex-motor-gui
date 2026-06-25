@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::hopea3::{Hopea3, InitProgress};
 use crate::logging::LogHandle;
+use crate::smartknob::SmartKnob;
 
 #[derive(Default)]
 pub struct AppState {
@@ -29,6 +30,11 @@ pub struct AppState {
     pub hopea3_init: StdMutex<InitProgress>,
     /// Base(Zenoh):到 hex-controller 的连接(至多一条)。
     pub zenoh: Mutex<Option<crate::zenoh_base::ZenohConn>>,
+    /// Arm(Zenoh):到 hex-controller 机械臂的连接(至多一条)。
+    pub zenoh_arm: Mutex<Option<crate::zenoh_arm::ZenohArmConn>>,
+    /// The running SmartKnob Robot Application, if started. At most one at a
+    /// time (it owns the high-rate haptic loop on the single bus).
+    pub smartknob: Mutex<Option<SmartKnob>>,
 }
 
 impl AppState {

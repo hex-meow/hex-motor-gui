@@ -131,6 +131,11 @@ const STRINGS = {
     en: "Triple-omni mobile base: 3 motors, 500 Hz max-torque PV control over one shared CAN-FD RPDO + live odometry.",
     zh: "三全向轮移动底盘：3 电机，单帧共享 CAN-FD RPDO 的 500 Hz 带最大力矩速度（PV）控制 + 实时里程计。",
   },
+  toolSmartKnob: { en: "SmartKnob", zh: "智能旋钮" },
+  toolSmartKnobDesc: {
+    en: "Turn a single 4310/4342 into a haptic knob: software detents, endstops & return-to-center via high-rate MIT torque streaming. No press sensor — switch modes with the on-screen button.",
+    zh: "把单个 4310/4342 变成力反馈旋钮：高频 MIT 力矩流实现软件卡位、限位与回中。无下压传感器——用界面按钮切换模式。",
+  },
   toolBaseZenoh: { en: "Base(Zenoh)", zh: "Base(Zenoh)" },
   toolBaseZenohDesc: {
     en: "Connect to a hex-controller over Zenoh: auto-discover bases, take control, and drive — the productized robot_api path.",
@@ -158,6 +163,30 @@ const STRINGS = {
   zPose: { en: "Pose (odometry)", zh: "位姿（里程计）" },
   zTwist: { en: "Measured twist", zh: "实测速度" },
   zStop: { en: "STOP", zh: "急停归零" },
+
+  // SmartKnob panel
+  skConnectFirst: { en: "Connect to the bus first.", zh: "请先连接总线。" },
+  skNoMotors: { en: "No motors discovered yet…", zh: "尚未发现电机…" },
+  skMotor: { en: "Knob motor", zh: "旋钮电机" },
+  skStart: { en: "Start knob", zh: "启动旋钮" },
+  skStarting: { en: "Initializing…", zh: "正在初始化…" },
+  skStop: { en: "Stop", zh: "停止" },
+  skStartFailed: { en: "Start failed", zh: "启动失败" },
+  skRunning: { en: "Running", zh: "运行中" },
+  skStopped: { en: "Stopped", zh: "已停止" },
+  skClearError: { en: "Clear error", zh: "清除错误" },
+  skCleared: { en: "Cleared", zh: "已清除" },
+  skModes: { en: "Modes (mode button = press substitute)", zh: "模式（模式按钮 = 代替下压）" },
+  skValue: { en: "Value", zh: "数值" },
+  skPosition: { en: "Position", zh: "位置" },
+  skUnbounded: { en: "Unbounded", zh: "无限旋转" },
+  skEndstop: { en: "Endstop", zh: "限位" },
+  skAngle: { en: "Shaft angle", zh: "轴角度" },
+  skTorque: { en: "Torque (Nm)", zh: "力矩 (Nm)" },
+  skTuning: { en: "Tuning", zh: "调参" },
+  skStrength: { en: "Strength scale (Nm/unit)", zh: "强度系数 (Nm/单位)" },
+  skTorqueLimit: { en: "Torque limit (Nm)", zh: "力矩上限 (Nm)" },
+  skMaxTorque: { en: "Motor max torque (‰)", zh: "电机最大力矩 (‰)" },
 
   // HopeA3 panel
   hopeStart: { en: "Start", zh: "启动" },

@@ -3,7 +3,7 @@
 // snake_case parameters.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { BaseInfo, Hopea3InitProgress, Hopea3State, LiveState, MotorInfo, MotorMode, MotorTarget, ZenohBaseState } from "./types";
+import type { BaseInfo, Hopea3InitProgress, Hopea3State, KnobConfig, LiveState, MotorInfo, MotorMode, MotorTarget, SmartKnobState, ZenohBaseState } from "./types";
 
 export const api = {
   connect: (iface: string, ourNid: number, broadcastHeartbeat: boolean) =>
@@ -55,6 +55,18 @@ export const api = {
   hopea3ReinitMotor: (nid: number) => invoke<void>("hopea3_reinit_motor", { nid }),
   hopea3ResetOdom: () => invoke<void>("hopea3_reset_odom"),
   hopea3GetState: () => invoke<Hopea3State>("hopea3_get_state"),
+
+  // SmartKnob Robot Application
+  smartknobConfigs: () => invoke<KnobConfig[]>("smartknob_configs"),
+  smartknobStart: (nid: number, configIndex: number) =>
+    invoke<void>("smartknob_start", { nid, configIndex }),
+  smartknobStop: () => invoke<void>("smartknob_stop"),
+  smartknobSetConfig: (index: number) =>
+    invoke<void>("smartknob_set_config", { index }),
+  smartknobSetTuning: (strengthScale: number, torqueLimitNm: number, maxTorquePermille: number) =>
+    invoke<void>("smartknob_set_tuning", { strengthScale, torqueLimitNm, maxTorquePermille }),
+  smartknobClearError: () => invoke<void>("smartknob_clear_error"),
+  smartknobGetState: () => invoke<SmartKnobState>("smartknob_get_state"),
 
   // Base(Zenoh)
   zenohConnect: (connect: string) => invoke<void>("zenoh_connect", { connect }),

@@ -108,6 +108,46 @@ export interface Hopea3State {
   running: boolean;
 }
 
+// ── SmartKnob Robot Application (mirrors smartknob::KnobConfig / SmartKnobState) ──
+export interface KnobConfig {
+  position: number;
+  min_position: number;
+  max_position: number; // max < min => unbounded
+  position_width_radians: number;
+  detent_strength_unit: number;
+  endstop_strength_unit: number;
+  snap_point: number;
+  snap_point_bias: number;
+  detent_positions: number[];
+  text: string;
+  led_hue: number;
+}
+
+export interface SmartKnobState {
+  running: boolean;
+  config_index: number;
+  config: KnobConfig | null;
+  current_position: number;
+  min_position: number;
+  max_position: number;
+  num_positions: number; // 0 = unbounded
+  sub_position_unit: number;
+  shaft_angle_rad: number;
+  shaft_velocity_rev_per_s: number;
+  applied_torque_nm: number;
+  measured_torque_nm: number | null;
+  at_endstop: boolean;
+  node_id: number;
+  online: boolean;
+  enabled: boolean;
+  driver_temp_c: number | null;
+  motor_temp_c: number | null;
+  error: string | null;
+  strength_scale: number;
+  torque_limit_nm: number;
+  max_torque_permille: number;
+}
+
 // ── Base(Zenoh) (mirrors zenoh_base::ZenohBaseState / BaseInfo) ──
 export interface BaseInfo {
   prefix: string;
