@@ -37,7 +37,7 @@ export function ArmViewer({ q, gravity, jointNames, previewQ }: Props) {
     renderer.setPixelRatio(window.devicePixelRatio);
     mount.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 0, 0.3);
+    controls.target.set(0, 0, 0); // 始终绕零点(基座原点)旋转/缩放
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.75));
     const dir = new THREE.DirectionalLight(0xffffff, 0.8);

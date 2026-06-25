@@ -152,7 +152,17 @@ impl ZenohArmConn {
                     let Some(p) = c.prefix.lock().unwrap().clone() else { continue };
                     if !sample.key_expr().as_str().starts_with(&p) { continue; }
                     if let Ok(s) = pb::RobotStatus::decode(&*sample.payload().to_bytes()) {
-                        c.state.lock().unwrap().holder = s.session_holder;
+                        let our_sid = c.session_id.load(Ordering::Relaxed);
+                        // 我们自以为在控,但 holder 已不是我们(看门狗超时/被接管)→ 失去控制权。
+                        if our_sid != 0 && s.session_holder != our_sid {
+                            c.session_id.store(0, Ordering::Relaxed);
+                            *c.target.lock().unwrap() = None;
+                            let mut st = c.state.lock().unwrap();
+                            st.controlling = false; st.holder = s.session_holder; st.mode = "DISABLED".into();
+                            log::warn!("Arm: 失去控制权(当前 holder={})", s.session_holder);
+                        } else {
+                            c.state.lock().unwrap().holder = s.session_holder;
+                        }
                     }
                 }
             });
