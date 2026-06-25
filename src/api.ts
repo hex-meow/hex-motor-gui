@@ -87,7 +87,7 @@ export const api = {
   armAcquire: (prefix: string, model: string) => invoke<void>("arm_acquire", { prefix, model }),
   armSetMode: (mode: number) => invoke<void>("arm_set_mode", { mode }),
   armSetGravity: (gravity: [number, number, number]) => invoke<void>("arm_set_gravity", { gravity }),
-  armGoto: (q: number[]) => invoke<void>("arm_goto", { q }),
+  armGoto: (q: number[], kp: number, kd: number) => invoke<void>("arm_goto", { q, kp, kd }),
   armGetState: () => invoke<ZenohArmState>("arm_get_state"),
   armRelease: () => invoke<void>("arm_release"),
 };

@@ -28,6 +28,8 @@ export function ArmPanel() {
   const [gz, setGz] = useState(-9.81);
   const [busy, setBusy] = useState(false);
   const [previewQ, setPreviewQ] = useState<number[] | null>(null); // 预设悬浮预览
+  const [kp, setKp] = useState(20); // host 侧增益(控制器忠实执行);调低=移动柔和便于观察
+  const [kd, setKd] = useState(1.5);
 
   useEffect(() => {
     if (!connected) { setSt(null); return; }
@@ -64,7 +66,7 @@ export function ArmPanel() {
   const release = useCallback(async () => { try { await api.armRelease(); } catch (e) { message.error(errMsg(e)); } }, [message]);
   const setMode = useCallback(async (m: number) => { try { await api.armSetMode(m); } catch (e) { message.error(errMsg(e)); } }, [message]);
   const setGravity = useCallback(async () => { try { await api.armSetGravity([gx, gy, gz]); } catch (e) { message.error(errMsg(e)); } }, [gx, gy, gz, message]);
-  const goTo = useCallback(async (q: number[]) => { try { await api.armGoto(q); } catch (e) { message.error(errMsg(e)); } }, [message]);
+  const goTo = useCallback(async (q: number[]) => { try { await api.armGoto(q, kp, kd); } catch (e) { message.error(errMsg(e)); } }, [kp, kd, message]);
 
   const controlling = !!st?.controlling;
   const dof = st?.dof || 6;
@@ -123,6 +125,12 @@ export function ArmPanel() {
                 <Button disabled={!controlling} onClick={setGravity}>设</Button>
               </Space>
               <Typography.Text type="secondary">测试用 z=-2.9(30%)更安全;斜装时填 base 系真实重力</Typography.Text>
+
+              <Typography.Text strong>增益 kp/kd(host 侧给,控制器忠实执行;调低 kp 移动柔和便于观察)</Typography.Text>
+              <Space wrap>
+                <InputNumber style={{ width: 120 }} value={kp} min={0} step={1} prefix="kp" onChange={(v) => setKp(v ?? 0)} />
+                <InputNumber style={{ width: 120 }} value={kd} min={0} step={0.5} prefix="kd" onChange={(v) => setKd(v ?? 0)} />
+              </Space>
 
               <Typography.Text strong>预设位姿(悬浮预览幽灵臂,点击移动)</Typography.Text>
               <Space wrap>

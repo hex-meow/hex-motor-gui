@@ -573,12 +573,12 @@ pub async fn arm_set_gravity(state: State<'_, AppState>, gravity: [f32; 3]) -> C
     c.set_gravity(gravity).await.map_err(err)
 }
 
-/// 移动到预设位姿(进 ACTIVE + 流目标)。
+/// 移动到预设位姿(进 ACTIVE + 流目标)。kp/kd 由前端给。
 #[tauri::command]
-pub async fn arm_goto(state: State<'_, AppState>, q: Vec<f32>) -> CmdResult<()> {
+pub async fn arm_goto(state: State<'_, AppState>, q: Vec<f32>, kp: f32, kd: f32) -> CmdResult<()> {
     let g = state.zenoh_arm.lock().await;
     let c = g.as_ref().ok_or_else(|| "未连接 Arm Zenoh".to_string())?;
-    c.goto(q).await.map_err(err)
+    c.goto(q, kp, kd).await.map_err(err)
 }
 
 #[tauri::command]

@@ -76,6 +76,7 @@ struct Ctrl {
     prefix: StdMutex<Option<String>>,
     session_id: AtomicU32,
     target: StdMutex<Option<Vec<f32>>>, // Active 时 50Hz 流的目标位姿
+    gains: StdMutex<(f32, f32)>,        // (kp, kd) —— host 侧定增益(控制器忠实执行)
     state: StdMutex<ZenohArmState>,
 }
 
@@ -99,6 +100,7 @@ impl ZenohArmConn {
             prefix: StdMutex::new(None),
             session_id: AtomicU32::new(0),
             target: StdMutex::new(None),
+            gains: StdMutex::new((20.0, 1.5)),
             state: StdMutex::new(s0),
         });
 
@@ -115,10 +117,12 @@ impl ZenohArmConn {
                     if sid == 0 { continue; }
                     let Some(prefix) = c.prefix.lock().unwrap().clone() else { continue };
                     let Some(target) = c.target.lock().unwrap().clone() else { continue };
+                    let (kp, kd) = *c.gains.lock().unwrap();
+                    let n = target.len();
                     let jt = pb::JointTrajectory {
                         header: None,
                         session_id: sid,
-                        points: vec![pb::JointSetpoint { q: target, dq: vec![], kp: vec![], kd: vec![], tau_ff: vec![] }],
+                        points: vec![pb::JointSetpoint { q: target, dq: vec![], kp: vec![kp; n], kd: vec![kd; n], tau_ff: vec![] }],
                         t_from_start_ns: vec![0],
                         on_timeout: pb::TimeoutBehavior::Hold as i32,
                     };
@@ -209,10 +213,11 @@ impl ZenohArmConn {
         Ok(())
     }
 
-    /// 移动到预设位姿(进 ACTIVE + 50Hz 流目标)。
-    pub async fn goto(&self, q: Vec<f32>) -> anyhow::Result<()> {
+    /// 移动到预设位姿(进 ACTIVE + 50Hz 流目标)。kp/kd 由 host(GUI)给,控制器忠实执行。
+    pub async fn goto(&self, q: Vec<f32>, kp: f32, kd: f32) -> anyhow::Result<()> {
         let sid = self.ctrl.session_id.load(Ordering::Relaxed);
         if sid == 0 { return Err(anyhow!("未持有控制权")); }
+        *self.ctrl.gains.lock().unwrap() = (kp, kd);
         *self.ctrl.target.lock().unwrap() = Some(q);
         let req = pb::SetModeRequest { session_id: sid, mode: 2 };
         let _: Option<pb::GenericResponse> = query_one(&self.session, &format!("{}/rpc/set_mode", self.prefix()), enc(&req)).await;
