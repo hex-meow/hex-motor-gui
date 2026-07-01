@@ -44,6 +44,22 @@ export interface MotorInfo {
   is_ready: boolean;
   can_initialize: boolean;
   peak_torque_nm: number | null;
+  /** Host device kind from the 0x1018 identity: "motor" (default), "imu", … */
+  device_type: string;
+}
+
+// ── IMU (mirrors imu::ImuState) ──
+export interface ImuState {
+  node_id: number;
+  online: boolean;
+  /** Orientation [w, x, y, z], unit quaternion (local→sensor). */
+  quaternion: [number, number, number, number];
+  /** Acceleration [x, y, z] in g. */
+  accel: [number, number, number];
+  /** Angular rate [x, y, z] in deg/s. */
+  gyro: [number, number, number];
+  temp_c: number;
+  counter: number;
 }
 
 export interface Measurements {

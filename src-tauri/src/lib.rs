@@ -5,8 +5,10 @@
 
 mod backend;
 mod commands;
+mod device_registry;
 mod dto;
 mod hopea3;
+mod imu;
 mod logging;
 mod smartknob;
 mod state;
@@ -62,6 +64,11 @@ pub fn run() {
             commands::smartknob_set_tuning,
             commands::smartknob_clear_error,
             commands::smartknob_get_state,
+            commands::imu_start,
+            commands::imu_stop,
+            commands::imu_get_state,
+            commands::imu_bias_trim,
+            commands::imu_yaw_reset,
             commands::zenoh_connect,
             commands::zenoh_disconnect,
             commands::zenoh_discover,

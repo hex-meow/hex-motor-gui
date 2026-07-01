@@ -3,7 +3,7 @@
 // snake_case parameters.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ArmInfo, BaseInfo, Hopea3InitProgress, Hopea3State, KnobConfig, LiveState, MotorInfo, MotorMode, MotorTarget, SmartKnobState, ZenohArmState, ZenohBaseState } from "./types";
+import type { ArmInfo, BaseInfo, Hopea3InitProgress, Hopea3State, ImuState, KnobConfig, LiveState, MotorInfo, MotorMode, MotorTarget, SmartKnobState, ZenohArmState, ZenohBaseState } from "./types";
 
 export const api = {
   connect: (iface: string, ourNid: number, broadcastHeartbeat: boolean) =>
@@ -67,6 +67,13 @@ export const api = {
     invoke<void>("smartknob_set_tuning", { strengthScale, torqueLimitNm, maxTorquePermille }),
   smartknobClearError: () => invoke<void>("smartknob_clear_error"),
   smartknobGetState: () => invoke<SmartKnobState>("smartknob_get_state"),
+
+  // IMU
+  imuStart: (nid: number) => invoke<void>("imu_start", { nid }),
+  imuStop: () => invoke<void>("imu_stop"),
+  imuGetState: () => invoke<ImuState>("imu_get_state"),
+  imuBiasTrim: () => invoke<void>("imu_bias_trim"),
+  imuYawReset: () => invoke<void>("imu_yaw_reset"),
 
   // Base(Zenoh)
   zenohConnect: (connect: string) => invoke<void>("zenoh_connect", { connect }),

@@ -32,6 +32,10 @@ pub struct MotorInfoDto {
     /// the `0x6072` permille input as an approximate Nm value. `None` until
     /// initialized (or if the motor doesn't expose it).
     pub peak_torque_nm: Option<f32>,
+    /// Host device kind resolved from the `0x1018` identity via the GUI's
+    /// non-motor registry: `"motor"` (default), `"imu"`, … The frontend routes
+    /// the device to the matching panel on this field.
+    pub device_type: String,
 }
 
 impl From<&CoreMotorInfo> for MotorInfoDto {
@@ -40,6 +44,13 @@ impl From<&CoreMotorInfo> for MotorInfoDto {
             m.lifecycle,
             CoreMotorLifecycle::Identified | CoreMotorLifecycle::NeedsReinit { .. }
         );
+        // Resolve the host device kind from the 0x1018 identity (default motor).
+        let device_type = match &m.identity {
+            Some(id) => crate::device_registry::classify(id.vendor_id, id.product_code),
+            None => crate::device_registry::DeviceKind::Motor,
+        }
+        .as_str()
+        .to_string();
         Self {
             node_id: m.node_id,
             friendly_name: m.friendly_name(),
@@ -51,6 +62,7 @@ impl From<&CoreMotorInfo> for MotorInfoDto {
             is_ready: m.is_ready(),
             can_initialize,
             peak_torque_nm: m.peak_torque_nm,
+            device_type,
         }
     }
 }

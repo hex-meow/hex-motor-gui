@@ -64,6 +64,9 @@ pub async fn disconnect(state: State<'_, AppState>) -> CmdResult<()> {
     if let (Some(app), Some(mgr)) = (state.smartknob.lock().await.take(), state.manager().await) {
         app.stop(&mgr).await;
     }
+    if let Some(app) = state.imu.lock().await.take() {
+        app.stop().await;
+    }
     // Stop any running CSV recorders first so their files flush cleanly.
     for handle in state.drain_logs() {
         crate::logging::stop(handle).await;
@@ -453,6 +456,58 @@ pub async fn smartknob_get_state(
         Some(app) => app.state(),
         None => crate::smartknob::SmartKnobState::default(),
     })
+}
+
+// ───────────────────────────── IMU ──────────────────────────────
+
+/// Start streaming the selected IMU: NMT-Start it Operational and subscribe to
+/// its TPDO1 (quaternion + accel + gyro + temp).
+#[tauri::command]
+pub async fn imu_start(state: State<'_, AppState>, nid: u8) -> CmdResult<()> {
+    let mgr = manager(&state).await?;
+    let mut guard = state.imu.lock().await;
+    if guard.is_some() {
+        return Err("IMU already running; stop it first".into());
+    }
+    let app = crate::imu::ImuManager::start(mgr, nid).await.map_err(err)?;
+    *guard = Some(app);
+    log::info!("IMU started on 0x{nid:02X}");
+    Ok(())
+}
+
+/// Stop the IMU stream and return the device to Pre-Operational.
+#[tauri::command]
+pub async fn imu_stop(state: State<'_, AppState>) -> CmdResult<()> {
+    if let Some(app) = state.imu.lock().await.take() {
+        app.stop().await;
+        log::info!("IMU stopped");
+    }
+    Ok(())
+}
+
+/// Poll the latest IMU snapshot (quaternion, accel, gyro, temp, counter).
+#[tauri::command]
+pub async fn imu_get_state(state: State<'_, AppState>) -> CmdResult<crate::imu::ImuState> {
+    Ok(match state.imu.lock().await.as_ref() {
+        Some(app) => app.state(),
+        None => crate::imu::ImuState::default(),
+    })
+}
+
+/// Trigger a still gyro-bias calibration (hold the device motionless).
+#[tauri::command]
+pub async fn imu_bias_trim(state: State<'_, AppState>) -> CmdResult<()> {
+    let guard = state.imu.lock().await;
+    let app = guard.as_ref().ok_or_else(|| "IMU not running".to_string())?;
+    app.bias_trim().await.map_err(err)
+}
+
+/// Zero the IMU yaw (re-level from gravity).
+#[tauri::command]
+pub async fn imu_yaw_reset(state: State<'_, AppState>) -> CmdResult<()> {
+    let guard = state.imu.lock().await;
+    let app = guard.as_ref().ok_or_else(|| "IMU not running".to_string())?;
+    app.yaw_reset().await.map_err(err)
 }
 
 // ───────────────────────── Base(Zenoh) ─────────────────────────

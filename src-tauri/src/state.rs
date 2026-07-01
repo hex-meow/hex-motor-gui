@@ -35,6 +35,9 @@ pub struct AppState {
     /// The running SmartKnob Robot Application, if started. At most one at a
     /// time (it owns the high-rate haptic loop on the single bus).
     pub smartknob: Mutex<Option<SmartKnob>>,
+    /// The running IMU session, if started. At most one at a time; it streams
+    /// the selected IMU's TPDO1 and publishes a snapshot for the UI to poll.
+    pub imu: Mutex<Option<crate::imu::ImuManager>>,
 }
 
 impl AppState {

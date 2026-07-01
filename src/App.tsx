@@ -6,6 +6,7 @@ import { useI18n } from "./i18n";
 import { ConnectBar } from "./components/ConnectBar";
 import { Sidebar } from "./components/Sidebar";
 import { MotorDetail } from "./components/MotorDetail";
+import { ImuPanel } from "./components/ImuPanel";
 import { ChangeIdTool } from "./components/ChangeIdTool";
 import { ZeroTool } from "./components/ZeroTool";
 import { Hopea3Panel } from "./components/Hopea3Panel";
@@ -173,6 +174,8 @@ export default function App() {
             <ChangeIdTool devices={devices} selectedNid={selectedNid} connected={connected} />
           ) : tool === "zero" ? (
             <ZeroTool devices={devices} selectedNid={selectedNid} connected={connected} />
+          ) : selected && selected.device_type === "imu" ? (
+            <ImuPanel key={selected.node_id} info={selected} connected={connected} />
           ) : selected ? (
             <MotorDetail
               key={selected.node_id}

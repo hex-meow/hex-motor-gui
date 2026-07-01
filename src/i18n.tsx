@@ -28,6 +28,27 @@ const STRINGS = {
   initFailed: { en: "Initialize failed", zh: "初始化失败" },
   languageTip: { en: "切换到中文", zh: "Switch to English" },
 
+  // IMU panel
+  imuTitle: { en: "IMU", zh: "IMU" },
+  imuStreaming: { en: "Streaming", zh: "数据流" },
+  imuStarting: { en: "Starting…", zh: "启动中…" },
+  imuOffline: { en: "No data", zh: "无数据" },
+  imuOrientation: { en: "Orientation", zh: "姿态" },
+  imuRoll: { en: "Roll", zh: "横滚 Roll" },
+  imuPitch: { en: "Pitch", zh: "俯仰 Pitch" },
+  imuYaw: { en: "Yaw", zh: "航向 Yaw" },
+  imuQuaternion: { en: "Quaternion (w,x,y,z)", zh: "四元数 (w,x,y,z)" },
+  imuAccel: { en: "Acceleration (g)", zh: "加速度 (g)" },
+  imuGyro: { en: "Angular rate (°/s)", zh: "角速度 (°/s)" },
+  imuTemp: { en: "Temperature (°C)", zh: "温度 (°C)" },
+  imuSamples: { en: "Samples", zh: "采样计数" },
+  imuBiasTrim: { en: "Gyro bias trim", zh: "陀螺零偏标定" },
+  imuBiasTrimHint: { en: "Hold the device still, then trim to reduce yaw drift.", zh: "保持设备静止后标定，可降低 yaw 漂移。" },
+  imuYawReset: { en: "Reset yaw", zh: "航向归零" },
+  imuCmdSent: { en: "Command sent", zh: "命令已发送" },
+  imuCmdFailed: { en: "Command failed", zh: "命令失败" },
+  imuStartFailed: { en: "Start failed", zh: "启动失败" },
+
   // LivePanel
   online: { en: "Online", zh: "在线" },
   logic: { en: "Logic", zh: "控制逻辑" },
