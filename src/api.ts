@@ -64,16 +64,22 @@ export const api = {
   smartknobSetConfig: (index: number) =>
     invoke<void>("smartknob_set_config", { index }),
   smartknobSetTuning: (
+      pGain: number,
+      dGain: number,
       strengthScale: number,
       torqueLimitNm: number,
       maxTorquePermille: number,
       frictionCompensation: number,
+      clickTorqueNm: number,
     ) =>
     invoke<void>("smartknob_set_tuning", {
+      pGain,
+      dGain,
       strengthScale,
       torqueLimitNm,
       maxTorquePermille,
       frictionCompensation,
+      clickTorqueNm,
     }),
   smartknobClearError: () => invoke<void>("smartknob_clear_error"),
   smartknobGetState: () => invoke<SmartKnobState>("smartknob_get_state"),

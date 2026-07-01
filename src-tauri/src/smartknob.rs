@@ -87,13 +87,13 @@ const MAX_VEL_RAD_S: f64 = 60.0;
 /// PID output limit in firmware torque units (`PID_velocity.limit = 10`).
 const PID_LIMIT: f64 = 10.0;
 
-// ── Haptic click for fine detents ──
+// ── Haptic click ──
 //
-// When the detent width is very small (roughly ≤3°), the P factor is tiny
-// because the angular errors are small, and the D factor amplifies sensor
-// noise, causing audible buzz.  Instead we inject a short, alternating
-// torque burst — a "click" — every time the logical position changes.
-// This is the approach suggested in the firmware's TODO comment.
+// For modes with [`KnobConfig::click_torque_nm`] > 0, we inject a short
+// alternating torque burst — a "click" — every time the logical position
+// changes.  Direction alternates so clockwise and counter-clockwise
+// transitions both feel crisp.  Works for any detent width, from fine (≤3°)
+// to coarse.
 //
 //   Reference: scottbez1/smartknob firmware, motor_task.cpp:
 //   "consider eliminating this D factor entirely and just 'play' a
@@ -106,12 +106,6 @@ const CLICK_WIDTH_THRESHOLD_RAD: f64 = 3.0 * DEG;
 
 /// Click duration per direction (ticks at 1 kHz).  5 ms → 10 ms total per click.
 const CLICK_TICKS_PER_PHASE: u32 = 5;
-
-/// Peak click torque (Nm).  The click is a biphasic pulse: ± this value,
-/// each phase lasting [`CLICK_TICKS_PER_PHASE`] ticks.  The direction
-/// alternates on each successive detent so clockwise and counter-clockwise
-/// transitions feel symmetric.
-const CLICK_TORQUE_NM: f64 = 0.25;
 
 /// Default live-tunables.
 pub const DEFAULT_STRENGTH_SCALE: f64 = 0.15; // Nm per firmware PID unit
@@ -146,12 +140,12 @@ const ZERO_G_COAST_TICKS: u32 = 50;
 /// Velocity-hold proportional gain: Nm of torque per rad/s of velocity error.
 /// Provides damping — a speed drop of 1 rad/s produces 0.5 Nm of restoring
 /// torque.
-const ZERO_G_VEL_HOLD_KP: f64 = 0.5;
+const ZERO_G_VEL_HOLD_KP: f64 = 0.01;
 
 /// Velocity-hold integral gain: Nm of torque per rad of accumulated position
 /// error (the integral of velocity error).  Slowly trims out steady-state
 /// offset so the held speed exactly matches the captured target.
-const ZERO_G_VEL_HOLD_KI: f64 = 0.3;
+const ZERO_G_VEL_HOLD_KI: f64 = 0.0;
 
 /// Integral windup limit (Nm).  Prevents the I term from growing unbounded
 /// while the user is actively overriding the knob.
@@ -161,7 +155,7 @@ const ZERO_G_VEL_HOLD_I_LIMIT: f64 = 0.08;
 /// (rad/s) before the friction-compensation sign is allowed to flip.  This
 /// creates a deadband around zero crossing that eliminates the buzzy jitter
 /// when the user holds the knob still.
-const ZERO_G_SIGN_HYSTERESIS: f64 = 0.08;
+const ZERO_G_SIGN_HYSTERESIS: f64 = 0.50;
 
 /// Adaptation rate for the Coulomb friction observer (Nm per tick).  Single
 /// symmetric rate — the old fast/slow two-stage scheme had an asymmetric
@@ -191,6 +185,11 @@ pub struct KnobConfig {
     pub snap_point_bias: f64,
     /// If non-empty, only these positions have a detent (magnetic detents).
     pub detent_positions: Vec<i32>,
+    /// Per-mode default click torque (Nm). When > 0, haptic clicks (biphasic
+    /// torque pulses) fire on each detent transition instead of the classic
+    /// D-gain damper.  Live-tunable per mode via [`Tuning::click_torque_nm`];
+    /// this field seeds the initial value on first mode visit.
+    pub click_torque_nm: f64,
     /// When `true`, an adaptive velocity-hold loop runs that observes the
     /// knob's natural deceleration and applies just enough torque to cancel
     /// mechanical drag — creating a "zero-G" weightless feel with no manual
@@ -224,6 +223,7 @@ pub fn preset_configs() -> Vec<KnobConfig> {
              snap_point_bias,
              detent_positions: &[i32],
              zero_g,
+             click_torque_nm,
              friction_compensation,
              strength_scale,
              text: &str,
@@ -238,6 +238,7 @@ pub fn preset_configs() -> Vec<KnobConfig> {
         snap_point_bias,
         detent_positions: detent_positions.to_vec(),
         zero_g,
+        click_torque_nm,
         friction_compensation,
         strength_scale,
         text: text.to_string(),
@@ -245,19 +246,19 @@ pub fn preset_configs() -> Vec<KnobConfig> {
     };
     vec![
         // ── Zero-G: adaptive frictionless spin (no fixed compensation needed) ──
-        c(0, 0, -1, 10.0, 0.0, 1.0, 1.1, 0.0, &[], true, 0.0, 0.1, "Zero-G\nWeightless spin", 180),
+        c(0, 0, -1, 10.0, 0.0, 1.0, 1.1, 0.0, &[], true, 0.0, 0.0, 0.1, "Zero-G\nWeightless spin", 180),
         // ── classic presets ──
-        c(0, 0, -1, 10.0, 0.0, 1.0, 1.1, 0.0, &[], false, 0.09, 0.15, "Unbounded\nNo detents", 200),
-        c(0, 0, 10, 10.0, 0.0, 1.0, 1.1, 0.0, &[], false, 0.05, 0.25, "Bounded 0-10\nNo detents", 0),
-        c(0, 0, 72, 10.0, 0.0, 1.0, 1.1, 0.0, &[], false, 0.08, DEFAULT_STRENGTH_SCALE, "Multi-rev\nNo detents", 73),
-        c(0, 0, 1, 60.0, 1.0, 1.0, 0.55, 0.0, &[], false, 0.05, 0.25, "On/off\nStrong detent", 157),
-        c(0, 0, 0, 60.0, 0.01, 0.6, 1.1, 0.0, &[], false, DEFAULT_FRICTION_COMPENSATION, 0.05, "Return-to-center", 45),
-        c(127, 0, 255, 1.0, 0.0, 1.0, 1.1, 0.0, &[], false, 0.02, 0.3, "Fine values\nNo detents", 219),
-        c(127, 0, 255, 1.0, 1.0, 1.0, 1.1, 0.0, &[], false, DEFAULT_FRICTION_COMPENSATION, 0.16, "Fine values\nWith detents", 25),
-        c(0, 0, 31, 8.225806452, 2.0, 1.0, 1.1, 0.0, &[], false, 0.08, 0.75, "Coarse values\nStrong detents", 200),
-        c(0, 0, 31, 8.225806452, 0.2, 1.0, 1.1, 0.0, &[], false, 0.02, 2.9, "Coarse values\nWeak detents", 0),
-        c(0, 0, 31, 7.0, 2.5, 1.0, 0.7, 0.0, &[2, 10, 21, 22], false, 0.01, 0.8, "Magnetic detents", 73),
-        c(0, -6, 6, 60.0, 1.0, 1.0, 0.55, 0.4, &[], false, 0.02, 0.15, "Return-to-center\nwith detents", 157),
+        c(0, 0, -1, 10.0, 0.0, 1.0, 1.1, 0.0, &[], false, 0.0, 0.09, 0.15, "Unbounded\nNo detents", 200),
+        c(0, 0, 10, 10.0, 0.0, 1.0, 1.1, 0.0, &[], false, 0.0, 0.05, 0.25, "Bounded 0-10\nNo detents", 0),
+        c(0, 0, 72, 10.0, 0.0, 1.0, 1.1, 0.0, &[], false, 0.0, 0.08, DEFAULT_STRENGTH_SCALE, "Multi-rev\nNo detents", 73),
+        c(0, 0, 1, 60.0, 1.0, 1.0, 0.55, 0.0, &[], false, 0.0, 0.05, 0.25, "On/off\nStrong detent", 157),
+        c(0, 0, 0, 60.0, 0.01, 0.6, 1.1, 0.0, &[], false, 0.0, DEFAULT_FRICTION_COMPENSATION, 0.05, "Return-to-center", 45),
+        c(127, 0, 255, 1.0, 0.0, 1.0, 1.1, 0.0, &[], false, 0.0, 0.02, 0.3, "Fine values\nNo detents", 219),
+        c(127, 0, 255, 1.0, 1.0, 1.0, 1.1, 0.0, &[], false, 0.37, DEFAULT_FRICTION_COMPENSATION, 0.25, "Fine values\nWith detents", 25),
+        c(0, 0, 31, 8.225806452, 2.0, 1.0, 1.1, 0.0, &[], false, 0.0, 0.08, 0.75, "Coarse values\nStrong detents", 200),
+        c(0, 0, 31, 8.225806452, 0.2, 1.0, 1.1, 0.0, &[], false, 1.20, 0.02, 1.5, "Coarse values\nWeak detents", 0),
+        c(0, 0, 31, 7.0, 2.5, 1.0, 0.7, 0.0, &[2, 10, 21, 22], false, 0.0, 0.01, 0.8, "Magnetic detents", 73),
+        c(0, -6, 6, 60.0, 1.0, 1.0, 0.55, 0.4, &[], false, 0.0, 0.02, 0.15, "Return-to-center\nwith detents", 157),
     ]
 }
 
@@ -266,6 +267,13 @@ pub fn preset_configs() -> Vec<KnobConfig> {
 /// Live, host-tunable parameters (independent of the selected mode).
 #[derive(Clone, Copy)]
 struct Tuning {
+    /// Proportional gain (firmware PID units). Replaces
+    /// `config.detent_strength_unit * 4.0` when not at an endstop.
+    /// Seeded from the active config on first mode visit.
+    p_gain: f64,
+    /// Derivative gain (firmware PID units). Replaces `derivative_gain(&config)`.
+    /// Seeded from the active config on first mode visit.
+    d_gain: f64,
     /// Nm per firmware PID-output unit (overall haptic strength).
     strength_scale: f64,
     /// Hard host-side torque clamp (Nm).
@@ -276,15 +284,23 @@ struct Tuning {
     /// to cancel mechanical drag. Used by non-Zero-G modes; ignored when the
     /// active config has `zero_g = true`.
     friction_compensation: f64,
+    /// Haptic click torque (Nm). When > 0 and the active config has
+    /// `use_click = true`, a biphasic torque pulse fires on each detent
+    /// transition.  Live-tunable; seeded from [`DEFAULT_CLICK_TORQUE_NM`]
+    /// when the config first enables clicks.
+    click_torque_nm: f64,
 }
 
 impl Default for Tuning {
     fn default() -> Self {
         Self {
+            p_gain: 0.0,
+            d_gain: 0.0,
             strength_scale: DEFAULT_STRENGTH_SCALE,
             torque_limit_nm: DEFAULT_TORQUE_LIMIT_NM,
             max_torque_permille: DEFAULT_MAX_TORQUE_PERMILLE,
             friction_compensation: 0.0,
+            click_torque_nm: 0.0,
         }
     }
 }
@@ -325,6 +341,9 @@ pub struct SmartKnobState {
     pub torque_limit_nm: f64,
     pub max_torque_permille: u16,
     pub friction_compensation: f64,
+    pub click_torque_nm: f64,
+    pub p_gain: f64,
+    pub d_gain: f64,
 }
 
 // ───────────────────────────── the driver ───────────────────────────────────
@@ -365,7 +384,13 @@ impl SmartKnob {
         // preset's defaults on start.
         tuning.friction_compensation = configs[config_index].friction_compensation;
         tuning.strength_scale = configs[config_index].strength_scale;
+        tuning.p_gain = configs[config_index].detent_strength_unit * 4.0;
+        tuning.d_gain = derivative_gain(&configs[config_index]);
+        tuning.click_torque_nm = configs[config_index].click_torque_nm;
 
+        
+        // 对特殊模式覆盖 p_gain / d_gain
+        // let idx = config_index;
         // Per-motor init, retried — same recovery dance as HopeA3.
         let mut last_err = None;
         for attempt in 1..=INIT_ATTEMPTS {
@@ -388,15 +413,23 @@ impl SmartKnob {
         }
 
         // Per-mode tuning, seeded from each preset's defaults.
-        let per_mode_tuning: Vec<Tuning> = configs
+        let mut per_mode_tuning: Vec<Tuning> = configs
             .iter()
             .map(|c| Tuning {
                 strength_scale: c.strength_scale,
                 torque_limit_nm: DEFAULT_TORQUE_LIMIT_NM,
                 max_torque_permille: DEFAULT_MAX_TORQUE_PERMILLE,
                 friction_compensation: c.friction_compensation,
+                p_gain: c.detent_strength_unit * 4.0,
+                d_gain: derivative_gain(c),
+                click_torque_nm: c.click_torque_nm,
             })
             .collect();
+
+        // Add the following coverage: Directly modify the values for the special mode
+        // The mode index corresponds to the sequence of the preset_configs():
+        
+
         let per_mode_tuning = Arc::new(StdMutex::new(per_mode_tuning));
 
         let requested_config = Arc::new(StdMutex::new(config_index));
@@ -446,16 +479,22 @@ impl SmartKnob {
     /// currently-active config so the tuned values survive a mode round-trip.
     pub fn set_tuning(
         &self,
+        p_gain: f64,
+        d_gain: f64,
         strength_scale: f64,
         torque_limit_nm: f64,
         max_torque_permille: u16,
         friction_compensation: f64,
+        click_torque_nm: f64,
     ) {
         let clamped = Tuning {
+            p_gain: p_gain.max(0.0),
+            d_gain: d_gain.max(0.0),
             strength_scale: strength_scale.max(0.0),
             torque_limit_nm: torque_limit_nm.max(0.0),
             max_torque_permille: max_torque_permille.min(1000),
             friction_compensation: friction_compensation.max(0.0),
+            click_torque_nm: click_torque_nm.max(0.0),
         };
         *self.tuning.lock().unwrap() = clamped;
         // Persist into the per-mode slot for the current config.
@@ -681,6 +720,9 @@ async fn haptic_loop(
             tun.torque_limit_nm = saved.torque_limit_nm;
             tun.max_torque_permille = saved.max_torque_permille;
             tun.friction_compensation = saved.friction_compensation;
+            tun.click_torque_nm = saved.click_torque_nm;
+            tun.p_gain = saved.p_gain;
+            tun.d_gain = saved.d_gain;
             *tuning.lock().unwrap() = saved;
             // Reset the friction observer and velocity-hold state when switching modes.
             h.friction_observer = config.friction_compensation.max(ZERO_G_FRICTION_SEED);
@@ -748,24 +790,24 @@ async fn haptic_loop(
             && ((angle_to_detent_center > 0.0 && h.current_position == config.min_position)
                 || (angle_to_detent_center < 0.0 && h.current_position == config.max_position));
 
-        // P/D gains in firmware units (P = strength*4; D piecewise by width).
+        // P/D gains.  User-tunable for normal (non-endstop) operation;
+        // endstop always uses the hardcoded config strength so boundaries
+        // stay firm regardless of the feel tuning.
         let p_gain = if out_of_bounds {
             config.endstop_strength_unit * 4.0
         } else {
-            config.detent_strength_unit * 4.0
+            tun.p_gain
         };
-        let d_gain = derivative_gain(&config);
+        let d_gain = tun.d_gain;
 
         // ── haptic click: inject a brief torque burst on detent transition ──
-        // For very fine detents (width ≤ ~3°) the P factor is too small to
-        // give a clear tactile "notch" feel.  Instead we play a short
+        // When the user-tunable `click_torque_nm` is > 0, we play a short
         // biphasic torque pulse — a "click" — whenever the logical position
         // changes.  Direction alternates so clockwise and counter-clockwise
-        // transitions both feel like a crisp detent.
-        let click_active = width < CLICK_WIDTH_THRESHOLD_RAD
+        // transitions both feel like a crisp detent.  Works for any detent width.
+        let click_active = tun.click_torque_nm > 0.0
             && !out_of_bounds
-            && config.detent_positions.is_empty()
-            && config.detent_strength_unit > 0.0;
+            && config.detent_positions.is_empty();
         if click_active && h.current_position != h.prev_current_position {
             h.prev_current_position = h.current_position;
             h.click_ticks_remaining = CLICK_TICKS_PER_PHASE * 2;
@@ -909,13 +951,13 @@ async fn haptic_loop(
 
         h.prev_velocity_rad_s = velocity_rad_s;
 
-        // ── compute click torque (fine detents) ──
+        // ── compute click torque ──
         let click_torque = if click_active && h.click_ticks_remaining > 0 {
             h.click_ticks_remaining -= 1;
-            // Phase 1 (ticks 5-9): first direction; Phase 2 (ticks 0-4): reverse.
+            // Phase 1: first direction; Phase 2: reverse.
             let phase = h.click_ticks_remaining / CLICK_TICKS_PER_PHASE;
             let sign = if phase == 1 { h.click_dir } else { -h.click_dir };
-            sign * CLICK_TORQUE_NM
+            sign * tun.click_torque_nm
         } else {
             0.0
         };
@@ -964,6 +1006,9 @@ async fn haptic_loop(
             s.torque_limit_nm = tun.torque_limit_nm;
             s.max_torque_permille = tun.max_torque_permille;
             s.friction_compensation = tun.friction_compensation;
+            s.click_torque_nm = tun.click_torque_nm;
+            s.p_gain = tun.p_gain;
+            s.d_gain = tun.d_gain;
         }
     }
 
@@ -974,14 +1019,16 @@ async fn haptic_loop(
 /// Firmware's width-dependent derivative gain (creates "clicks" on fine
 /// detents, kept small on coarse ones; disabled for magnetic detents).
 ///
-/// For very fine detents (width ≤ [`CLICK_WIDTH_THRESHOLD_RAD`]), returns 0:
-/// the haptic-click pulse train replaces D-gain damping, avoiding the sensor
-/// noise amplification that the original firmware's TODO flagged.
+/// Returns 0 when the config enables [`KnobConfig::use_click`] (the haptic
+/// click pulse train replaces D-gain damping, avoiding the sensor noise
+/// amplification that the original firmware's TODO flagged).  Also returns 0
+/// for very fine detents (width ≤ [`CLICK_WIDTH_THRESHOLD_RAD`]) as a
+/// fallback for modes that have detents but don't opt into clicks.
 fn derivative_gain(config: &KnobConfig) -> f64 {
     if !config.detent_positions.is_empty() {
         return 0.0;
     }
-    if config.position_width_radians < CLICK_WIDTH_THRESHOLD_RAD {
+    if config.click_torque_nm > 0.0 || config.position_width_radians < CLICK_WIDTH_THRESHOLD_RAD {
         return 0.0;
     }
     let lower = config.detent_strength_unit * 0.08; // at 3°

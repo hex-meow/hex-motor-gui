@@ -21,10 +21,13 @@ import type { KnobConfig, MotorInfo, SmartKnobState } from "../types";
 const POLL_MS = 40; // 25 Hz UI poll (haptic loop runs at 1 kHz in Rust)
 
 interface PerModeTuning {
+  pGain: number;
+  dGain: number;
   strength: number;
   torqueLimit: number;
   maxTorque: number;
   frictionComp: number;
+  clickTorque: number;
 }
 
 export function SmartKnobPanel({ connected, devices }: { connected: boolean; devices: MotorInfo[] }) {
@@ -44,6 +47,9 @@ export function SmartKnobPanel({ connected, devices }: { connected: boolean; dev
   const [torqueLimit, setTorqueLimit] = useState(2.0);
   const [maxTorque, setMaxTorque] = useState(700);
   const [frictionComp, setFrictionComp] = useState(0.0);
+  const [clickTorque, setClickTorque] = useState(0.0);
+  const [pGain, setPGain] = useState(0.0);
+  const [dGain, setDGain] = useState(0.0);
 
   // Per-mode tuning RAM — survives mode switches so the user doesn't lose
   // their tweaks.  Lazy: only populated when the user touches a slider.
@@ -92,7 +98,7 @@ export function SmartKnobPanel({ connected, devices }: { connected: boolean; dev
     setStarting(true);
     try {
       await api.smartknobStart(selectedNid, modeIndex);
-      await api.smartknobSetTuning(strength, torqueLimit, maxTorque, frictionComp);
+      await api.smartknobSetTuning(pGain, dGain, strength, torqueLimit, maxTorque, frictionComp, clickTorque);
       setRunning(true);
       message.success(t("skRunning"));
     } catch (e) {
@@ -100,7 +106,7 @@ export function SmartKnobPanel({ connected, devices }: { connected: boolean; dev
     } finally {
       setStarting(false);
     }
-  }, [selectedNid, modeIndex, strength, torqueLimit, maxTorque, frictionComp, message, t]);
+  }, [selectedNid, modeIndex, pGain, dGain, strength, torqueLimit, maxTorque, frictionComp, clickTorque, message, t]);
 
   const stop = useCallback(async () => {
     try {
@@ -118,39 +124,54 @@ export function SmartKnobPanel({ connected, devices }: { connected: boolean; dev
       // Restore per-mode tuning if the user has touched this mode before;
       // otherwise fall back to the preset defaults.
       const saved = perModeTuning.current.get(idx);
-      let s: number, tl: number, mt: number, fc: number;
+      let s: number, tl: number, mt: number, fc: number, ct: number, pg: number, dg: number;
       if (saved) {
         s = saved.strength;
         tl = saved.torqueLimit;
         mt = saved.maxTorque;
         fc = saved.frictionComp;
+        ct = saved.clickTorque;
+        pg = saved.pGain;
+        dg = saved.dGain;
       } else {
         s = configs[idx]?.strength_scale ?? 0.15;
         tl = torqueLimit;
         mt = maxTorque;
         fc = configs[idx]?.friction_compensation ?? 0;
+        ct = configs[idx]?.click_torque_nm ?? 0;
+        pg = (configs[idx]?.detent_strength_unit ?? 0) * 4.0;
+        dg = computeDerivativeGain(configs[idx]);
       }
       setStrength(s);
       setTorqueLimit(tl);
       setMaxTorque(mt);
       setFrictionComp(fc);
+      setClickTorque(ct);
+      setPGain(pg);
+      setDGain(dg);
       if (running) {
         api.smartknobSetConfig(idx).catch(() => {});
-        api.smartknobSetTuning(s, tl, mt, fc).catch(() => {});
+        api.smartknobSetTuning(pg, dg, s, tl, mt, fc, ct).catch(() => {});
       }
     },
     [running, configs, torqueLimit, maxTorque]
   );
 
   const applyTuning = useCallback(
-    (s: number, tl: number, mt: number, fc: number) => {
+    (s: number, tl: number, mt: number, fc: number, ct: number, pg: number, dg: number) => {
       setStrength(s);
       setTorqueLimit(tl);
       setMaxTorque(mt);
       setFrictionComp(fc);
+      setClickTorque(ct);
+      setPGain(pg);
+      setDGain(dg);
       // Persist into the per-mode RAM slot for the currently-active mode.
-      perModeTuning.current.set(modeIndex, { strength: s, torqueLimit: tl, maxTorque: mt, frictionComp: fc });
-      if (running) api.smartknobSetTuning(s, tl, mt, fc).catch(() => {});
+      perModeTuning.current.set(modeIndex, {
+        strength: s, torqueLimit: tl, maxTorque: mt, frictionComp: fc,
+        clickTorque: ct, pGain: pg, dGain: dg,
+      });
+      if (running) api.smartknobSetTuning(pg, dg, s, tl, mt, fc, ct).catch(() => {});
     },
     [running, modeIndex]
   );
@@ -235,31 +256,33 @@ export function SmartKnobPanel({ connected, devices }: { connected: boolean; dev
             </Row>
           </Card>
 
-          <Card title={t("skTuning")} size="small" style={{ marginTop: 16 }}>
+          <Card title={t("skTuningFeel")} size="small" style={{ marginTop: 16 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 8 }}>
+              (p_gain &times; input &minus; d_gain &times; velocity) &times; strength_scale
+            </Typography.Text>
             <Space wrap align="end">
+              <Labeled label={t("skPGain")}>
+                <InputNumber
+                  min={0}
+                  step={0.1}
+                  value={pGain}
+                  onChange={(v) => applyTuning(strength, torqueLimit, maxTorque, frictionComp, clickTorque, v ?? 0, dGain)}
+                />
+              </Labeled>
+              <Labeled label={t("skDGain")}>
+                <InputNumber
+                  min={0}
+                  step={0.001}
+                  value={dGain}
+                  onChange={(v) => applyTuning(strength, torqueLimit, maxTorque, frictionComp, clickTorque, pGain, v ?? 0)}
+                />
+              </Labeled>
               <Labeled label={t("skStrength")}>
                 <InputNumber
                   min={0}
                   step={0.01}
                   value={strength}
-                  onChange={(v) => applyTuning(v ?? 0, torqueLimit, maxTorque, frictionComp)}
-                />
-              </Labeled>
-              <Labeled label={t("skTorqueLimit")}>
-                <InputNumber
-                  min={0}
-                  step={0.1}
-                  value={torqueLimit}
-                  onChange={(v) => applyTuning(strength, v ?? 0, maxTorque, frictionComp)}
-                />
-              </Labeled>
-              <Labeled label={t("skMaxTorque")}>
-                <InputNumber
-                  min={0}
-                  max={1000}
-                  step={50}
-                  value={maxTorque}
-                  onChange={(v) => applyTuning(strength, torqueLimit, v ?? 0, frictionComp)}
+                  onChange={(v) => applyTuning(v ?? 0, torqueLimit, maxTorque, frictionComp, clickTorque, pGain, dGain)}
                 />
               </Labeled>
               <Labeled label={t("skFrictionComp")}>
@@ -268,7 +291,38 @@ export function SmartKnobPanel({ connected, devices }: { connected: boolean; dev
                   max={0.5}
                   step={0.005}
                   value={frictionComp}
-                  onChange={(v) => applyTuning(strength, torqueLimit, maxTorque, v ?? 0)}
+                  onChange={(v) => applyTuning(strength, torqueLimit, maxTorque, v ?? 0, clickTorque, pGain, dGain)}
+                />
+              </Labeled>
+              <Labeled label={t("skClickTorque")}>
+                <InputNumber
+                  min={0}
+                  max={2.0}
+                  step={0.01}
+                  value={clickTorque}
+                  onChange={(v) => applyTuning(strength, torqueLimit, maxTorque, frictionComp, v ?? 0, pGain, dGain)}
+                />
+              </Labeled>
+            </Space>
+          </Card>
+
+          <Card title={t("skTuningSafety")} size="small" style={{ marginTop: 16 }}>
+            <Space wrap align="end">
+              <Labeled label={t("skTorqueLimit")}>
+                <InputNumber
+                  min={0}
+                  step={0.1}
+                  value={torqueLimit}
+                  onChange={(v) => applyTuning(strength, v ?? 0, maxTorque, frictionComp, clickTorque, pGain, dGain)}
+                />
+              </Labeled>
+              <Labeled label={t("skMaxTorque")}>
+                <InputNumber
+                  min={0}
+                  max={1000}
+                  step={50}
+                  value={maxTorque}
+                  onChange={(v) => applyTuning(strength, torqueLimit, v ?? 0, frictionComp, clickTorque, pGain, dGain)}
                 />
               </Labeled>
             </Space>
@@ -451,6 +505,26 @@ function ModeButton({ cfg, active, onClick }: { cfg: KnobConfig; active: boolean
       {cfg.text}
     </Button>
   );
+}
+
+// ─── Client-side replica of Rust derivative_gain() for seeding on first mode visit ───
+
+const DEG = Math.PI / 180;
+const CLICK_WIDTH_THRESHOLD_RAD = 3 * DEG;
+
+function computeDerivativeGain(cfg: KnobConfig | undefined): number {
+  if (!cfg) return 0;
+  if (cfg.detent_positions.length > 0) return 0;           // magnetic detents: no D
+  if (cfg.click_torque_nm > 0 || cfg.position_width_radians < CLICK_WIDTH_THRESHOLD_RAD) return 0; // clicks replace D
+
+  const lower = cfg.detent_strength_unit * 0.08;            // at 3°
+  const upper = cfg.detent_strength_unit * 0.02;            // at 8°
+  const w_lower = 3 * DEG;
+  const w_upper = 8 * DEG;
+  const raw = lower + (upper - lower) / (w_upper - w_lower) * (cfg.position_width_radians - w_lower);
+  const lo = Math.min(lower, upper);
+  const hi = Math.max(lower, upper);
+  return Math.max(lo, Math.min(hi, raw));
 }
 
 function Labeled({ label, children }: { label: string; children: React.ReactNode }) {

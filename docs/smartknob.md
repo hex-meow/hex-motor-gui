@@ -75,7 +75,7 @@ torque = strength_scale × pid
 ```
 
 - **P 增益**：`detent_strength_unit × 4`（档位内）或 `endstop_strength_unit × 4`（限位处）
-- **D 增益**：与档位宽度相关的分段函数 —— 细档位（窄间距）阻尼大产生清脆"咔嗒"感，粗档位阻尼小
+- **D 增益**：与档位宽度相关的分段函数（粗档位阻尼小）。**细档位（≤3°）禁用 D 增益并改用触觉"咔嗒"脉冲** —— 每次越过档位时注入一个 10 ms 的双向力矩脉冲，代替 D 增益产生卡位确认手感，同时避免传感器噪声放大
 - **磁性档位**（`detent_positions` 非空）：仅指定位置有弹簧力，其他位置可自由旋转
 - **速度保护**：轴速度超过 60 rad/s 时力矩归零，防止正反馈失控
 
@@ -230,7 +230,7 @@ torque = strength_scale × pid
 - `friction_compensation = 0.02 Nm`：极低的摩擦补偿，手感极轻
 - `strength_scale = 0.3`：高强度——但由于 `detent_strength=0`，这个值主要影响限位处的反馈力度
 
-在 1° 间距下，D 增益处于高位（靠近 `w_lower=3°` 时阻尼最大），产生平滑但略带阻尼的手感，适合精细调节。
+1° 间距属于细档位范畴（≤3°），D 增益被设为 0（触觉咔嗒机制接管细档位的阻尼控制）。但由于 `detent_strength=0`，弹簧力和 D 阻尼均为零，实际上不影响手感——旋钮仅靠摩擦补偿提供顺滑的旋转体验。
 
 **适用场景**：需要从 0-255 精确选值的场景，如 RGB 颜色分量调节、MIDI 参数控制。
 
@@ -238,14 +238,42 @@ torque = strength_scale × pid
 
 ### 7 — Fine values / With detents（精细有档位）
 
-**原理：每个整数值都有触觉"咔嗒"**
+**原理：每个整数值都有触觉"咔嗒"——通过双向力矩脉冲实现**
 
 - 与模式 6 相同的范围和间距（0-255, 1°）
 - **关键区别**：`detent_strength_unit = 1.0`——每个 1° 位置都有档位弹簧力
 - `friction_compensation = 0.03 Nm` + `strength_scale = 0.16`
-- 1° 间距产生最强的 D 阻尼（接近下界 3°），档位手感清脆、明确
 
-由于 1° 间距极窄，D 增益计算位于分段函数的高位（靠近 3° 时 ~`0.08×strength`），产生比粗调模式更强的速度阻尼。结果是每个刻度都有清晰的"咔嗒"确认，同时旋转速度受控。
+**触觉咔嗒机制（Haptic Click）**：
+
+由于档位间距仅 1°（≈0.0175 rad），P 因子产生的弹簧回中力非常微弱——即使偏离档位中心 1°，P 力矩也仅约 `4 × 0.0175 × 0.16 ≈ 0.011 Nm`，难以被手指感知。原始固件通过提升 D 增益来弥补，但 D 增益会放大传感器噪声，导致电机在静止时发出"嗡嗡"声。
+
+本实现采纳了中建议的方案：**完全移除细档位的 D 增益，改为在每次越过档位时注入一个硬编码的双向力矩脉冲（"咔嗒"）**：
+
+```
+越过档位边界 → 触发咔嗒脉冲
+  ├── 阶段 1（+5 ms）：+CLICK_TORQUE_NM（正向力矩脉冲）
+  └── 阶段 2（-5 ms）：−CLICK_TORQUE_NM（反向力矩脉冲）
+总时长：10 ms @ 1 kHz
+方向交替：每次咔嗒的方向取反，保证顺时针/逆时针手感对称
+```
+
+**关键参数**：
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `CLICK_WIDTH_THRESHOLD_RAD` | 3°（≈0.0524 rad） | 低于此宽度的档位全部使用咔嗒机制 |
+| `CLICK_TORQUE_NM` | 0.25 Nm | 脉冲峰值力矩，幅度适中、清晰可辨 |
+| `CLICK_TICKS_PER_PHASE` | 5 ticks（5 ms） | 每个方向的脉冲持续 5 ms |
+| `derivative_gain()` | 0（宽度 < 3° 时） | D 增益被禁用，由咔嗒替代 |
+
+**触发条件**（全部满足时启用）：
+1. 档位宽度 < 3°（细档位）
+2. 不在限位边界处（`out_of_bounds`）
+3. 非磁性档位模式（`detent_positions` 为空）
+4. 档位强度 > 0（实际上是"有档位"的模式）
+
+综合效果：每个刻度都有清脆的"咔嗒"确认，力度不受档位宽度影响，且无传感器噪声。与依赖 D 增益的旧方案相比，手感更加明确、安静。
 
 **适用场景**：需要精确到每个值的步进调节，如音量（0-255 级 MIDI CC）、像素级参数调整。
 
@@ -474,20 +502,150 @@ UI 以 25 Hz（40 ms）轮询后端状态。触觉控制回路在 Rust 侧以 1 
 | `DEAD_ZONE_RAD` | π/180 (1°) | 死区角度下限 |
 | `MAX_VEL_RAD_S` | 60.0 | 安全速度上限 |
 | `PID_LIMIT` | 10.0 | PID 输出限幅（固件单位） |
+| `CLICK_WIDTH_THRESHOLD_RAD` | 3°（≈0.0524 rad） | 细档位阈值，低于此值启用咔嗒机制 |
+| `CLICK_TORQUE_NM` | 0.25 Nm | 咔嗒脉冲峰值力矩 |
+| `CLICK_TICKS_PER_PHASE` | 5（5 ms @ 1 kHz） | 咔嗒每方向持续 tick 数 |
 | `FRAME_LEN` | 8 | RPDO 帧字节数 |
 | `INIT_ATTEMPTS` | 3 | 电机初始化重试次数 |
 
 ---
 
-## 初始化流程
+## 初始化流程（init_motor）
 
-1. CiA402 标准初始化（状态机 → Switch On Disabled）
-2. 重映射 RPDO1 映射表，指向 `TFF(32bit) + KD(16bit) + MaxTorque(16bit)`
-3. 清零静态 MIT 参数（PDES、VDES、KP）
-4. 设置 `0x6072` 最大力矩安全限幅
-5. 切换到 MIT 模式（同时使能电机）
+初始化由 [`init_motor()`](../src-tauri/src/smartknob.rs#L535-L583) 函数完成，共 6 个步骤。该函数在 `SmartKnob::start()` 中被调用，支持最多 3 次重试（`INIT_ATTEMPTS = 3`）。
 
-初始化支持最多 3 次重试，每次失败后先清除故障再重试。
+### 步骤概览
+
+```
+init_motor(nid, max_torque_permille)
+│
+├── ① CiA402 标准初始化（状态机使能）
+│     mgr.initialize(nid)  →  NMT 复位 → 清除故障 → 状态机进入 Switch On Disabled
+│
+├── ② 配置 RPDO1 映射（核心！）
+│     recipe: RpdoRecipe { rpdo_index: 0, cob_id: 0x200+nid, entries: [...], transmission_type: 255 }
+│     → build_rpdo_config_writes(&recipe)  →  生成 SDO 写入序列
+│     → 逐条通过 SDO 下载到电机
+│
+├── ③ 清零静态 MIT 参数
+│     sdo::download_f32(0x2003, 0x01, 0.0)  →  PDES = 0（位置目标，不使用）
+│     sdo::download_f32(0x2003, 0x02, 0.0)  →  VDES = 0（速度目标，不使用）
+│     sdo::download_u16(0x2003, 0x04, 0)    →  KP   = 0（位置增益，不使用）
+│
+├── ④ 设置电机侧安全限幅
+│     mgr.set_max_torque(nid, max_torque_permille)  →  写 0x6072（‰ 峰值力矩）
+│
+├── ⑤ 切换电机模式
+│     mgr.set_mode(nid, MotorMode::Mit)  →  写 0x6060 = MIT，同时使能电机
+│
+└── ⑥ 完成 —— 电机进入 MIT 模式，等待 RPDO1 力矩帧
+```
+
+### 步骤 ② 详解：RPDO1 映射配置
+
+这是初始化的关键步骤，它将电机的 RPDO1 映射到上位机需要下发的力矩控制帧。代码使用 `RpdoRecipe` 高层抽象，由 `build_rpdo_config_writes()` 自动生成标准 CANopen SDO 写入序列。
+
+#### Recipe 定义（[smartknob.rs:546-555](../src-tauri/src/smartknob.rs#L546-L555)）
+
+```rust
+let recipe = RpdoRecipe {
+    rpdo_index: 0,                          // 使用 RPDO1
+    cob_id: 0x200 + nid,                    // COB-ID = 0x200 + 节点ID（保持默认）
+    entries: vec![
+        TpdoEntry { index: 0x2003, subindex: 0x03, bit_len: 32 }, // TFF (f32)  —— 力矩前馈
+        TpdoEntry { index: 0x2003, subindex: 0x05, bit_len: 16 }, // KD  (u16)  —— 速度阻尼
+        TpdoEntry { index: 0x6072, subindex: 0x00, bit_len: 16 }, // MaxTorque (u16) —— 力矩限幅
+    ],
+    transmission_type: 255,                 // 异步传输（收到即执行）
+};
+```
+
+**各字段说明：**
+
+| 字段 | 值 | 说明 |
+|------|-----|------|
+| `rpdo_index` | `0` | 使用 RPDO1（RPDO1~RPDO4 对应 index 0~3） |
+| `cob_id` | `0x200 + nid` | RPDO1 的 COB-ID，保持电机出厂默认值（`0x200` 为广播地址偏移） |
+| `entries` | 3 个映射条目 | 决定每帧 RPDO 包含哪些 OD 对象 |
+| `transmission_type` | `255` | 异步执行——收到 RPDO 帧后立刻将数据写入对应 OD 对象 |
+
+**RPDO 帧布局（共 8 字节）：**
+
+```
+Byte 0        1        2        3        4        5        6        7
+┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
+│  TFF[0] │  TFF[1] │  TFF[2] │  TFF[3] │  KD[0]  │  KD[1]  │ MT[0]   │ MT[1]   │
+│  0x2003:03 (f32, LE)           │  0x2003:05 (u16, LE) │  0x6072:00 (u16, LE)  │
+└─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+```
+
+在 haptic loop 中（[smartknob.rs:970-981](../src-tauri/src/smartknob.rs#L970-L981)），每 tick 按此布局构造 CAN-FD 帧并发送。
+
+#### SDO 写入序列（由 `build_rpdo_config_writes()` 生成）
+
+`build_rpdo_config_writes()` 函数位于 `hex_motor` crate（`rpdo_config.rs`），将 recipe 转换为标准 CANopen PDO 配置序列：
+
+| 次序 | OD 对象 | Sub | 写入值 | 目的 |
+|------|---------|-----|--------|------|
+| 1 | `0x1400` (RPDO1 通信参数) | 1 | `0x80000000 \| COB-ID` | **禁用 RPDO1**（设置 bit 31 valid=0），为修改做准备 |
+| 2 | `0x1400` (RPDO1 通信参数) | 2 | `255` (0xFF) | 设置传输类型为**异步**（收到帧即写入） |
+| 3 | `0x1600` (RPDO1 映射参数) | 0 | `0` | 清零映射条目计数（修改映射前必须清零） |
+| 4 | `0x1600` (RPDO1 映射参数) | 1 | `0x20030320` | 映射条目 1：`0x2003:03`，32 bit |
+| 5 | `0x1600` (RPDO1 映射参数) | 2 | `0x20030510` | 映射条目 2：`0x2003:05`，16 bit |
+| 6 | `0x1600` (RPDO1 映射参数) | 3 | `0x60720010` | 映射条目 3：`0x6072:00`，16 bit |
+| 7 | `0x1600` (RPDO1 映射参数) | 0 | `3` | 恢复映射条目计数 = 3 |
+| 8 | `0x1400` (RPDO1 通信参数) | 1 | `COB-ID`（bit 31 = 0） | **启用 RPDO1**（valid=1） |
+
+每条 SDO 写入间隔 10 ms（[smartknob.rs:562](../src-tauri/src/smartknob.rs#L562)），确保电机有足够时间处理。
+
+#### PDO 映射条目编码
+
+每个映射条目由 `TpdoEntry::packed()` 编码为 32 位值：
+
+```
+packed = (index << 16) | (subindex << 8) | bit_len
+```
+
+| 条目 | index | sub | bit_len | packed (hex) |
+|------|-------|-----|---------|---------------|
+| TFF | 0x2003 | 0x03 | 32 (0x20) | `0x20030320` |
+| KD | 0x2003 | 0x05 | 16 (0x10) | `0x20030510` |
+| MaxTorque | 0x6072 | 0x00 | 16 (0x10) | `0x60720010` |
+
+---
+
+### 关键 OD 对象总览
+
+初始化过程中涉及的 CANopen 对象字典（OD）汇总：
+
+| OD 地址 | 名称 | 位宽 | 访问 | 说明 |
+|---------|------|------|------|------|
+| `0x1400` | RPDO1 通信参数 | — | SDO | Sub1=COB-ID, Sub2=传输类型 |
+| `0x1600` | RPDO1 映射参数 | — | SDO | Sub0=条目数, Sub1~8=映射条目 |
+| `0x2003:01` | MIT PDES | f32 | SDO | 位置目标（初始化为 0） |
+| `0x2003:02` | MIT VDES | f32 | SDO | 速度目标（初始化为 0） |
+| `0x2003:03` | MIT TFF | f32 | **RPDO** | 力矩前馈（每 tick 流式下发） |
+| `0x2003:04` | MIT KP | u16 | SDO | 位置增益（初始化为 0） |
+| `0x2003:05` | MIT KD | u16 | **RPDO** | 速度阻尼（每 tick 流式下发） |
+| `0x2003:07` | MIT Factor | f32 | SDO | KP/KD 物理→整数除数 |
+| `0x6060` | Mode of Operation | i8 | SDO | 电机模式（写 0=MIT） |
+| `0x6072` | Max Torque | u16 | **RPDO** | 力矩安全限幅（‰ 峰值，每 tick 流式下发） |
+
+### 可修改性
+
+**RPDO 映射完全可以修改。** 修改入口在 `init_motor()` 函数的 recipe 定义处（[smartknob.rs:546-555](../src-tauri/src/smartknob.rs#L546-L555)）：
+
+- **修改映射条目**：增删 `entries` 列表中的条目即可改变 RPDO 帧内容。需要同步修改 `FRAME_LEN` 常量和 haptic loop 中的帧构造代码（[smartknob.rs:970-973](../src-tauri/src/smartknob.rs#L970-L973)）
+- **修改 COB-ID**：修改 `rpdo_cob_id()` 函数（[smartknob.rs:50-52](../src-tauri/src/smartknob.rs#L50-L52)），可改用其他 RPDO（RPDO2~RPDO4 对应 `0x300/400/500 + nid`）
+- **修改传输类型**：设为同步值（1~240）则电机在收到 SYNC 报文后才执行写入；255 为异步立即执行
+- **修改 MIT 静态参数**：在步骤 ③ 中可设置非零的 PDES/VDES/KP（当前全部清零，因为所有控制逻辑在上位机侧）
+
+### 重试机制
+
+初始化支持最多 3 次尝试（`INIT_ATTEMPTS = 3`），每次失败后：
+1. 调用 `mgr.clear_error(nid)` 清除 CiA402 故障
+2. 等待 300 ms 后重试
+3. 3 次全部失败则返回错误，不启动触觉回路
 
 ---
 

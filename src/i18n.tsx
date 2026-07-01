@@ -188,6 +188,11 @@ const STRINGS = {
   skTorqueLimit: { en: "Torque limit (Nm)", zh: "力矩上限 (Nm)" },
   skMaxTorque: { en: "Motor max torque (‰)", zh: "电机最大力矩 (‰)" },
   skFrictionComp: { en: "Friction comp (Nm)", zh: "摩擦补偿 (Nm)" },
+  skClickTorque: { en: "Click torque (Nm)", zh: "弹片强度 (Nm)" },
+  skPGain: { en: "P-gain", zh: "P 增益" },
+  skDGain: { en: "D-gain", zh: "D 增益" },
+  skTuningFeel: { en: "Tuning — Feel", zh: "调参 — 手感" },
+  skTuningSafety: { en: "Tuning — Safety", zh: "调参 — 安全" },
 
   // HopeA3 panel
   hopeStart: { en: "Start", zh: "启动" },
