@@ -15,7 +15,7 @@ function Root() {
         locale={lang === "zh" ? zhCN : enUS}
         theme={{
           algorithm: theme.darkAlgorithm,
-          token: { colorPrimary: "#4f8cff" },
+          token: { colorPrimary: "#E75B2B" },
         }}
       >
         <AntdApp>

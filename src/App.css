@@ -1,4 +1,6 @@
 :root {
+  --brand-primary: #e75b2b;
+  --brand-primary-soft: #ff8a5f;
   --tool-bg: #07090d;
   --tool-panel: #101318;
   --tool-panel-hover: #151920;
@@ -6,15 +8,41 @@
   --tool-text: #eef2f7;
   --tool-muted: #9aa4b2;
   --tool-subtle: #667085;
-  --tool-blue: #5ca7ff;
+  --tool-blue: var(--brand-primary);
   --tool-amber: #f4bb56;
   --tool-green: #62d18f;
   --tool-cyan: #57d2e8;
   --tool-purple: #a58bff;
   --tool-pink: #f183b5;
-  --tool-orange: #ff9b5c;
+  --tool-orange: var(--brand-primary);
   --tool-lime: #b6dc5f;
   --tool-slate: #aeb8c6;
+}
+
+.app-shell .app-header.ant-layout-header {
+  background:
+    linear-gradient(90deg, rgba(231, 91, 43, 0.98), rgba(173, 55, 26, 0.96)),
+    #e75b2b;
+  border-bottom: 1px solid rgba(255, 190, 160, 0.34);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+.app-header .ant-typography,
+.app-header .ant-typography-secondary {
+  color: rgba(255, 247, 243, 0.9) !important;
+}
+
+.app-header .ant-btn-default {
+  color: #fff6f2;
+  background: rgba(0, 0, 0, 0.18);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.app-header .ant-btn-default:hover,
+.app-header .ant-btn-default:focus-visible {
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.46);
 }
 
 .tool-picker {
@@ -27,8 +55,8 @@
   background:
     linear-gradient(rgba(255, 255, 255, 0.026) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
-    radial-gradient(circle at 16% 12%, rgba(92, 167, 255, 0.13), transparent 28rem),
-    radial-gradient(circle at 86% 22%, rgba(98, 209, 143, 0.1), transparent 30rem),
+    radial-gradient(circle at 16% 12%, rgba(231, 91, 43, 0.16), transparent 28rem),
+    radial-gradient(circle at 86% 22%, rgba(244, 187, 86, 0.09), transparent 30rem),
     linear-gradient(180deg, #0b0d12 0%, #090b0f 42%, #090b0f 100%);
   background-size: 44px 44px, 44px 44px, auto, auto, 100% 100%;
   scrollbar-color: rgba(194, 203, 216, 0.5) rgba(255, 255, 255, 0.06);
@@ -91,7 +119,7 @@
 
 .tool-picker__eyebrow {
   margin: 0 0 8px;
-  color: var(--tool-cyan);
+  color: var(--brand-primary-soft);
   font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0.12em;

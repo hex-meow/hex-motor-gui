@@ -29,6 +29,7 @@
 .zenoh-card,
 .zenoh-odom {
   background:
+    linear-gradient(135deg, rgba(231, 91, 43, 0.055), transparent 42%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02)),
     #101318;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -42,6 +43,10 @@
   gap: 12px;
   align-items: end;
   padding: 16px;
+  border-top-color: rgba(231, 91, 43, 0.72);
+  box-shadow:
+    inset 0 1px rgba(255, 190, 160, 0.16),
+    0 10px 28px rgba(0, 0, 0, 0.18);
 }
 
 .zenoh-field {

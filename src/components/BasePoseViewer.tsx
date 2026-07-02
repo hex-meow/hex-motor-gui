@@ -71,12 +71,12 @@ export function BasePoseViewer({ connected, poseX, poseY, theta, vx, vy, wz }: B
     scene.add(grid);
 
     const axes = new THREE.Group();
-    axes.add(makeAxis(0xff5b5b, new THREE.Vector3(1, 0, 0), "+X"));
+    axes.add(makeAxis(0xe75b2b, new THREE.Vector3(1, 0, 0), "+X"));
     axes.add(makeAxis(0x63d18f, new THREE.Vector3(0, 0, 1), "+Y"));
     axes.position.set(-4.8, 0.02, -4.8);
     scene.add(axes);
 
-    const trailMat = new THREE.LineBasicMaterial({ color: 0x5ca7ff, transparent: true, opacity: 0.82 });
+    const trailMat = new THREE.LineBasicMaterial({ color: 0xe75b2b, transparent: true, opacity: 0.82 });
     const trail = new THREE.Line(new THREE.BufferGeometry(), trailMat);
     trailRef.current = trail;
     scene.add(trail);
@@ -85,7 +85,7 @@ export function BasePoseViewer({ connected, poseX, poseY, theta, vx, vy, wz }: B
     robotRef.current = robot;
     scene.add(robot);
 
-    const velocity = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, VELOCITY_ARROW_Y, 0), 0.01, 0x57d2e8, 0.16, 0.08);
+    const velocity = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, VELOCITY_ARROW_Y, 0), 0.01, 0xff8a5f, 0.16, 0.08);
     velocityRef.current = velocity;
     robot.add(velocity);
 
@@ -211,7 +211,7 @@ export function BasePoseViewer({ connected, poseX, poseY, theta, vx, vy, wz }: B
 function makeRobot(): THREE.Group {
   const g = new THREE.Group();
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0x243244, metalness: 0.2, roughness: 0.55 });
-  const edgeMat = new THREE.MeshStandardMaterial({ color: 0x5ca7ff, emissive: 0x153154, metalness: 0.1, roughness: 0.4 });
+  const edgeMat = new THREE.MeshStandardMaterial({ color: 0xe75b2b, emissive: 0x4a1609, metalness: 0.1, roughness: 0.4 });
   const darkMat = new THREE.MeshStandardMaterial({ color: 0x0b0e13, roughness: 0.8 });
 
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.16, 48), bodyMat);

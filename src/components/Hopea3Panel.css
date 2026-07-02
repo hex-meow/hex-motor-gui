@@ -1,0 +1,124 @@
+.hope-panel {
+  width: 100%;
+}
+
+.hope-start-panel {
+  grid-template-columns: minmax(260px, 1fr) auto minmax(180px, 0.45fr);
+}
+
+.hope-start-panel__copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hope-start-panel__progress {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hope-dashboard {
+  grid-template-columns: minmax(300px, 340px) minmax(420px, 1fr) minmax(280px, 340px);
+}
+
+.hope-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.hope-labeled {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hope-labeled .ant-typography {
+  font-size: 12px;
+}
+
+.hope-labeled .ant-input-number {
+  width: 100%;
+}
+
+.hope-odom {
+  min-height: 560px;
+}
+
+.hope-telemetry .zenoh-metric-grid {
+  grid-template-columns: 1fr;
+}
+
+.hope-lower-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(460px, 1.2fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.hope-limits,
+.hope-motors {
+  min-width: 0;
+  padding: 16px;
+}
+
+.hope-triplet {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 14px;
+}
+
+.hope-triplet .ant-input-number-group-wrapper {
+  width: 100%;
+}
+
+.hope-motors .ant-table-wrapper {
+  overflow: auto;
+}
+
+@media (max-width: 1220px) {
+  .hope-start-panel {
+    grid-template-columns: minmax(260px, 1fr) auto;
+  }
+
+  .hope-start-panel__progress {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .hope-dashboard {
+    grid-template-columns: minmax(260px, 320px) minmax(420px, 1fr);
+  }
+
+  .hope-telemetry {
+    grid-column: 1 / -1;
+  }
+
+  .hope-telemetry .zenoh-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .hope-lower-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .hope-start-panel,
+  .hope-dashboard,
+  .hope-lower-grid,
+  .hope-limit-grid,
+  .hope-triplet {
+    grid-template-columns: 1fr;
+  }
+
+  .hope-start-panel__progress {
+    justify-content: flex-start;
+  }
+
+  .hope-telemetry .zenoh-metric-grid {
+    grid-template-columns: 1fr;
+  }
+}

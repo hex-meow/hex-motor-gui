@@ -126,8 +126,9 @@ export default function App() {
   const showConnectBar = tool !== "zenoh" && tool !== "arm" && tool !== "canalyzer";
 
   return (
-    <Layout style={{ height: "100vh" }}>
+    <Layout className="app-shell" style={{ height: "100vh" }}>
       <Layout.Header
+        className="app-header"
         style={{
           display: "flex",
           alignItems: "center",

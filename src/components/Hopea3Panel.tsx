@@ -1,29 +1,23 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   App as AntdApp,
   Button,
-  Card,
-  Checkbox,
-  Col,
-  Empty,
   InputNumber,
-  Row,
-  Slider,
   Space,
-  Statistic,
+  Switch,
   Table,
   Tag,
   Typography,
 } from "antd";
-import ReactECharts from "echarts-for-react";
 import { api, errMsg } from "../api";
 import { useI18n } from "../i18n";
 import { nid2hex } from "../format";
 import type { Hopea3Motor, Hopea3State } from "../types";
 import { BasePoseViewer } from "./BasePoseViewer";
+import "./ZenohPanel.css";
+import "./Hopea3Panel.css";
 
 const POLL_MS = 50; // 20 Hz UI poll (control/odom run at 500 Hz in Rust)
-const MAX_TRAJ_POINTS = 3000;
 const MANUAL_MS = 33; // ~30 Hz manual-input (keyboard/gamepad) loop
 const PAD_DEADZONE = 0.12;
 
@@ -41,10 +35,6 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
   const [initProg, setInitProg] = useState<{ current: number; total: number; attempt: number } | null>(null);
   const [state, setState] = useState<Hopea3State | null>(null);
 
-  // Command sliders (local; pushed to backend on change).
-  const [vx, setVx] = useState(0);
-  const [vy, setVy] = useState(0);
-  const [wz, setWz] = useState(0);
   // Limits + torque (applied on button).
   const [maxLinear, setMaxLinear] = useState(3);
   const [maxAngular, setMaxAngular] = useState(3);
@@ -57,13 +47,9 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
   const [keyboardEnabled, setKeyboardEnabled] = useState(true);
   const [manualLinear, setManualLinear] = useState(1.0);
   const [manualAngular, setManualAngular] = useState(1.5);
-  const [padName, setPadName] = useState<string | null>(null);
   const keysDown = useRef<Set<string>>(new Set());
   const manualWasActive = useRef(false);
 
-  // Trajectory ring buffer (world frame).
-  const traj = useRef<{ x: number; y: number }[]>([]);
-  const [trajVersion, setTrajVersion] = useState(0);
   const [odomViewVersion, setOdomViewVersion] = useState(0);
 
   // Poll backend state while running.
@@ -75,15 +61,6 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
         const s = await api.hopea3GetState();
         if (!alive) return;
         setState(s);
-        if (s.running) {
-          const buf = traj.current;
-          const last = buf[buf.length - 1];
-          if (!last || Math.hypot(s.pose_x - last.x, s.pose_y - last.y) > 1e-4) {
-            buf.push({ x: s.pose_x, y: s.pose_y });
-            if (buf.length > MAX_TRAJ_POINTS) buf.shift();
-            setTrajVersion((v) => v + 1);
-          }
-        }
       } catch {
         /* transient */
       }
@@ -120,8 +97,6 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
     setStarting(true);
     try {
       await api.hopea3Start();
-      traj.current = [];
-      setTrajVersion((v) => v + 1);
       setOdomViewVersion((v) => v + 1);
       setRunning(true);
       message.success(t("hopeRunning"));
@@ -139,9 +114,6 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
       message.error(errMsg(e));
     }
     setRunning(false);
-    setVx(0);
-    setVy(0);
-    setWz(0);
     setState(null);
   }, [message]);
 
@@ -153,21 +125,17 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
     }
   }, [connected, running]);
 
-  // Gamepad connect/disconnect → show its name (polling happens in the loop).
-  useEffect(() => {
-    const onConnect = (e: GamepadEvent) => setPadName(e.gamepad.id);
-    const onDisconnect = () => {
-      const pads = navigator.getGamepads?.() ?? [];
-      const still = Array.from(pads).find((p) => p);
-      setPadName(still ? still.id : null);
-    };
-    window.addEventListener("gamepadconnected", onConnect);
-    window.addEventListener("gamepaddisconnected", onDisconnect);
-    return () => {
-      window.removeEventListener("gamepadconnected", onConnect);
-      window.removeEventListener("gamepaddisconnected", onDisconnect);
-    };
+  const cmd = useCallback((nvx: number, nvy: number, nwz: number) => {
+    api.hopea3SetCmd(nvx, nvy, nwz).catch(() => {});
   }, []);
+  const stopMotion = useCallback(() => cmd(0, 0, 0), [cmd]);
+
+  const hold = (nvx: number, nvy: number, nwz: number) => ({
+    onPointerDown: () => cmd(nvx, nvy, nwz),
+    onPointerUp: stopMotion,
+    onPointerCancel: stopMotion,
+    onPointerLeave: stopMotion,
+  });
 
   // Keyboard key tracking (WASD/QE), only while running and not typing in a field.
   useEffect(() => {
@@ -199,7 +167,7 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
   }, [running, keyboardEnabled]);
 
   // Manual-input loop: gamepad takes priority over keyboard; releasing all
-  // input sends one zero then yields the command back to the sliders.
+  // input sends one zero then yields the command back to the pointer controls.
   useEffect(() => {
     if (!running) return;
     const h = window.setInterval(() => {
@@ -207,21 +175,15 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
       const kb = keyboardEnabled ? readKeyboard(keysDown.current, manualLinear, manualAngular) : null;
       const drive = gp ?? kb;
       if (drive) {
-        api.hopea3SetCmd(drive.vx, drive.vy, drive.wz).catch(() => {});
-        setVx(round2(drive.vx));
-        setVy(round2(drive.vy));
-        setWz(round2(drive.wz));
+        cmd(drive.vx, drive.vy, drive.wz);
         manualWasActive.current = true;
       } else if (manualWasActive.current) {
-        api.hopea3SetCmd(0, 0, 0).catch(() => {});
-        setVx(0);
-        setVy(0);
-        setWz(0);
+        stopMotion();
         manualWasActive.current = false;
       }
     }, MANUAL_MS);
     return () => window.clearInterval(h);
-  }, [running, keyboardEnabled, manualLinear, manualAngular]);
+  }, [running, keyboardEnabled, manualLinear, manualAngular, cmd, stopMotion]);
 
   const clearErrors = useCallback(async () => {
     try {
@@ -244,15 +206,6 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
       setReinitNid(null);
     }
   }, [message, t]);
-
-  const pushCmd = useCallback((nvx: number, nvy: number, nwz: number) => {
-    api.hopea3SetCmd(nvx, nvy, nwz).catch(() => {});
-  }, []);
-
-  const onVx = (v: number | null) => { const n = v ?? 0; setVx(n); pushCmd(n, vy, wz); };
-  const onVy = (v: number | null) => { const n = v ?? 0; setVy(n); pushCmd(vx, n, wz); };
-  const onWz = (v: number | null) => { const n = v ?? 0; setWz(n); pushCmd(vx, vy, n); };
-  const zeroMotion = () => { setVx(0); setVy(0); setWz(0); pushCmd(0, 0, 0); };
 
   const applyLimits = async () => {
     try {
@@ -279,216 +232,245 @@ export function Hopea3Panel({ connected }: { connected: boolean }) {
     }
   };
 
-  if (!connected) {
-    return (
-      <div style={{ paddingTop: 80 }}>
-        <Empty description={t("hopeConnectFirst")} />
-      </div>
-    );
-  }
+  const canDrive = connected && running;
+  const startLabel = starting
+    ? initProg
+      ? `${t("hopeStarting")} ${initProg.current}/${initProg.total}${initProg.attempt > 1 ? ` (#${initProg.attempt})` : ""}`
+      : t("hopeStarting")
+    : t("hopeStart");
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Card>
-        <Space>
+    <div className="hope-panel zenoh-panel">
+      <header className="zenoh-panel__header">
+        <div>
+          <Typography.Title level={3} className="zenoh-panel__title">
+            {t("toolHopeA3")}
+          </Typography.Title>
+          <Typography.Text type="secondary">{t("toolHopeA3Desc")}</Typography.Text>
+        </div>
+      </header>
+
+      <section className="hope-start-panel zenoh-connect-panel">
+        <div className="hope-start-panel__copy">
+          <Typography.Text strong>{t("hopeStart")}</Typography.Text>
+          <Typography.Text type="secondary">
+            {connected ? t("hopeStartHint") : t("hopeNeedConnect")}
+          </Typography.Text>
+        </div>
+        <div className="zenoh-connect-panel__actions">
           {!running ? (
-            <Button type="primary" loading={starting} onClick={start}>
-              {starting
-                ? initProg
-                  ? `${t("hopeStarting")} ${initProg.current}/${initProg.total}${initProg.attempt > 1 ? ` (#${initProg.attempt})` : ""}`
-                  : t("hopeStarting")
-                : t("hopeStart")}
+            <Button type="primary" loading={starting} disabled={!connected} onClick={start}>
+              {startLabel}
             </Button>
           ) : (
             <Button danger onClick={stop}>
               {t("hopeStop")}
             </Button>
           )}
-          {!running && (
-            <Button onClick={clearErrors}>{t("hopeClearErrors")}</Button>
-          )}
-          <Tag color={running ? "green" : "default"}>
-            {running ? t("hopeRunning") : t("hopeStopped")}
-          </Tag>
-        </Space>
-      </Card>
+          <Button disabled={!connected || running} onClick={clearErrors}>{t("hopeClearErrors")}</Button>
+        </div>
+        {starting && initProg && (
+          <div className="hope-start-panel__progress">
+            <Tag color="orange">{initProg.current}/{initProg.total}{initProg.attempt > 1 ? ` #${initProg.attempt}` : ""}</Tag>
+          </div>
+        )}
+      </section>
 
-      {running && (
-        <>
-          <Row gutter={16}>
-            <Col xs={24} lg={10}>
-              <Card title={t("hopeCmdTwist")} size="small">
-                <CmdSlider label={t("hopeVx")} value={vx} min={-maxLinear} max={maxLinear} step={0.05} onChange={onVx} />
-                <CmdSlider label={t("hopeVy")} value={vy} min={-maxLinear} max={maxLinear} step={0.05} onChange={onVy} />
-                <CmdSlider label={t("hopeWz")} value={wz} min={-maxAngular} max={maxAngular} step={0.05} onChange={onWz} />
-                <Button block onClick={zeroMotion}>{t("hopeStopMotion")}</Button>
-              </Card>
+      <div className="zenoh-dashboard hope-dashboard">
+        <section className="zenoh-card hope-drive">
+          <div className="zenoh-card__heading">
+            <div>
+              <h2>{t("zDriveTitle")}</h2>
+              <Typography.Text type="secondary">{t("zDriveHint")}</Typography.Text>
+            </div>
+            <div className="zenoh-active-toggle">
+              <Typography.Text type="secondary">{t("zActiveShort")}</Typography.Text>
+              <Switch checked={canDrive} disabled />
+            </div>
+          </div>
 
-              <Card title={t("hopeManual")} size="small" style={{ marginTop: 16 }}>
-                <Checkbox checked={keyboardEnabled} onChange={(e) => setKeyboardEnabled(e.target.checked)}>
-                  {t("hopeKeyboard")}
-                </Checkbox>
-                <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: "6px 0" }}>
-                  {t("hopeKeyHint")}
-                </Typography.Paragraph>
-                <Space style={{ marginBottom: 8 }}>
-                  <Typography.Text type="secondary">{t("hopeGamepad")}:</Typography.Text>
-                  <Tag color={padName ? "green" : "default"}>{padName ?? t("hopeGamepadNone")}</Tag>
-                </Space>
-                <Space wrap align="end">
-                  <Labeled label={t("hopeManualLinear")}>
-                    <InputNumber min={0} step={0.1} value={manualLinear} onChange={(v) => setManualLinear(v ?? 0)} />
-                  </Labeled>
-                  <Labeled label={t("hopeManualAngular")}>
-                    <InputNumber min={0} step={0.1} value={manualAngular} onChange={(v) => setManualAngular(v ?? 0)} />
-                  </Labeled>
-                </Space>
-              </Card>
+          <div className="zenoh-pad" aria-label={t("zMove")}>
+            <span />
+            <Button disabled={!canDrive} {...hold(manualLinear, 0, 0)}>▲</Button>
+            <span />
+            <Button disabled={!canDrive} {...hold(0, -manualLinear, 0)}>◀</Button>
+            <Button danger disabled={!canDrive} onClick={stopMotion}>{t("zStop")}</Button>
+            <Button disabled={!canDrive} {...hold(0, manualLinear, 0)}>▶</Button>
+            <Button disabled={!canDrive} {...hold(0, 0, -manualAngular)}>↺</Button>
+            <Button disabled={!canDrive} {...hold(-manualLinear, 0, 0)}>▼</Button>
+            <Button disabled={!canDrive} {...hold(0, 0, manualAngular)}>↻</Button>
+          </div>
 
-              <Card title={t("hopeMeasTwist")} size="small" style={{ marginTop: 16 }}>
-                <Row gutter={8}>
-                  <Col span={8}><Statistic title="vx (m/s)" value={fmt(state?.meas_vx)} /></Col>
-                  <Col span={8}><Statistic title="vy (m/s)" value={fmt(state?.meas_vy)} /></Col>
-                  <Col span={8}><Statistic title="ωz (rad/s)" value={fmt(state?.meas_wz)} /></Col>
-                </Row>
-              </Card>
-            </Col>
+          <div className="zenoh-speed-grid">
+            <label className="zenoh-field">
+              <span>{t("zSpeedLin")}</span>
+              <InputNumber disabled={!canDrive} min={0} max={maxLinear} step={0.1} value={manualLinear} onChange={(v) => setManualLinear(v ?? 0)} />
+            </label>
+            <label className="zenoh-field">
+              <span>{t("zSpeedAng")}</span>
+              <InputNumber disabled={!canDrive} min={0} max={maxAngular} step={0.1} value={manualAngular} onChange={(v) => setManualAngular(v ?? 0)} />
+            </label>
+          </div>
 
-            <Col xs={24} lg={14}>
-              <Card
-                title={t("hopeOdom")}
-                size="small"
-                extra={<Button size="small" onClick={() => { traj.current = []; setTrajVersion((v) => v + 1); setOdomViewVersion((v) => v + 1); api.hopea3ResetOdom().catch(() => {}); }}>{t("hopeResetOdom")}</Button>}
-              >
-                <div style={{ height: 440, margin: "-8px -8px 12px" }}>
-                  <BasePoseViewer
-                    key={odomViewVersion}
-                    connected={running}
-                    poseX={state?.pose_x ?? 0}
-                    poseY={state?.pose_y ?? 0}
-                    theta={state?.pose_theta ?? 0}
-                    vx={state?.meas_vx ?? 0}
-                    vy={state?.meas_vy ?? 0}
-                    wz={state?.meas_wz ?? 0}
-                  />
-                </div>
-                <TrajectoryChart
-                  points={traj.current}
-                  version={trajVersion}
-                  poseX={state?.pose_x ?? 0}
-                  poseY={state?.pose_y ?? 0}
-                  poseTheta={state?.pose_theta ?? 0}
-                  headingLabel={t("hopeHeading")}
-                  trajLabel={t("hopeTrajectory")}
-                />
-                <Typography.Text type="secondary">
-                  {t("hopePose")}: x={fmt(state?.pose_x)} m, y={fmt(state?.pose_y)} m, θ={fmt(state ? (state.pose_theta * 180) / Math.PI : null)}°
-                </Typography.Text>
-              </Card>
+          <div className="zenoh-keyboard-control">
+            <div className="zenoh-keyboard-control__top">
+              <Typography.Text type="secondary">{t("zKeyboard")}</Typography.Text>
+              <Switch size="small" disabled={!canDrive} checked={keyboardEnabled} onChange={setKeyboardEnabled} />
+            </div>
+            <div className="zenoh-key-hints" aria-label={t("zKeyboard")}>
+              <kbd>W</kbd>
+              <kbd>A</kbd>
+              <kbd>S</kbd>
+              <kbd>D</kbd>
+              <kbd>Q</kbd>
+              <kbd>E</kbd>
+            </div>
+            <Typography.Text type="secondary" className="zenoh-keyboard-control__hint">
+              {t("zKeyHint")}
+            </Typography.Text>
+          </div>
+        </section>
 
-              <Card title={t("hopeLimits")} size="small" style={{ marginTop: 16 }}>
-                <Space wrap align="end">
-                  <Labeled label={t("hopeMaxLinear")}>
-                    <InputNumber min={0} step={0.1} value={maxLinear} onChange={(v) => setMaxLinear(v ?? 0)} />
-                  </Labeled>
-                  <Labeled label={t("hopeMaxAngular")}>
-                    <InputNumber min={0} step={0.1} value={maxAngular} onChange={(v) => setMaxAngular(v ?? 0)} />
-                  </Labeled>
-                  <Labeled label={t("hopeAccLinear")}>
-                    <InputNumber min={0} step={0.5} value={accLin} onChange={(v) => setAccLin(v ?? 0)} />
-                  </Labeled>
-                  <Labeled label={t("hopeAccAngular")}>
-                    <InputNumber min={0} step={0.5} value={accAng} onChange={(v) => setAccAng(v ?? 0)} />
-                  </Labeled>
-                  <Button onClick={applyLimits}>{t("apply")}</Button>
-                </Space>
-                <div style={{ marginTop: 12 }}>
-                  <Typography.Text type="secondary">{t("hopeMaxTorque")}</Typography.Text>
-                  <Space wrap style={{ marginTop: 6 }}>
-                    {[0, 1, 2].map((i) => (
-                      <InputNumber
-                        key={i}
-                        addonBefore={i + 1}
-                        min={0}
-                        max={1000}
-                        value={torque[i]}
-                        onChange={(v) => {
-                          const next = [...torque] as [number, number, number];
-                          next[i] = v ?? 0;
-                          applyTorque(next);
-                        }}
-                        style={{ width: 130 }}
-                      />
-                    ))}
-                  </Space>
-                </div>
-                <div style={{ marginTop: 12 }}>
-                  <Typography.Text type="secondary">{t("hopeKd")}</Typography.Text>
-                  <Space wrap style={{ marginTop: 6 }}>
-                    {[0, 1, 2].map((i) => (
-                      <InputNumber
-                        key={i}
-                        addonBefore={i + 1}
-                        min={0}
-                        step={0.05}
-                        value={kd[i]}
-                        onChange={(v) => {
-                          const next = [...kd] as [number, number, number];
-                          next[i] = v ?? 0;
-                          applyKd(next);
-                        }}
-                        style={{ width: 130 }}
-                      />
-                    ))}
-                  </Space>
-                </div>
-              </Card>
-            </Col>
-          </Row>
+        <section className="zenoh-odom hope-odom">
+          <div className="zenoh-card__heading zenoh-odom__heading">
+            <div>
+              <h2>{t("hopeOdom")}</h2>
+              <Typography.Text type="secondary">{t("hopePose")}</Typography.Text>
+            </div>
+            <Button size="small" disabled={!canDrive} onClick={() => { setOdomViewVersion((v) => v + 1); api.hopea3ResetOdom().catch(() => {}); }}>
+              {t("hopeResetOdom")}
+            </Button>
+          </div>
+          <BasePoseViewer
+            key={odomViewVersion}
+            connected={running}
+            poseX={state?.pose_x ?? 0}
+            poseY={state?.pose_y ?? 0}
+            theta={state?.pose_theta ?? 0}
+            vx={state?.meas_vx ?? 0}
+            vy={state?.meas_vy ?? 0}
+            wz={state?.meas_wz ?? 0}
+          />
+        </section>
 
-          <Card title={t("hopeMotorsHdr")} size="small">
-            <MotorTable motors={state?.motors ?? []} t={t} onReinit={reinitMotor} busyNid={reinitNid} />
-          </Card>
-        </>
-      )}
-    </Space>
-  );
-}
+        <section className="zenoh-card zenoh-telemetry hope-telemetry">
+          <div className="zenoh-card__heading">
+            <div>
+              <h2>{t("zTelemetry")}</h2>
+              <Typography.Text type="secondary">{t("hopeMeasTwist")}</Typography.Text>
+            </div>
+          </div>
+          <MetricGroup
+            title={t("hopePose")}
+            items={[
+              ["x", `${fmt(state?.pose_x)} m`],
+              ["y", `${fmt(state?.pose_y)} m`],
+              ["theta", `${fmt(state?.pose_theta)} rad`],
+            ]}
+          />
+          <MetricGroup
+            title={t("hopeMeasTwist")}
+            items={[
+              ["vx", `${fmt(state?.meas_vx)} m/s`],
+              ["vy", `${fmt(state?.meas_vy)} m/s`],
+              ["wz", `${fmt(state?.meas_wz)} rad/s`],
+            ]}
+          />
+        </section>
+      </div>
 
-function CmdSlider({
-  label, value, min, max, step, onChange,
-}: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number | null) => void }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <Typography.Text type="secondary">{label}</Typography.Text>
-      <Row gutter={8} align="middle">
-        <Col flex="auto">
-          <Slider min={min} max={max} step={step} value={value} onChange={onChange} />
-        </Col>
-        <Col>
-          <InputNumber min={min} max={max} step={step} value={value} onChange={onChange} style={{ width: 90 }} />
-        </Col>
-      </Row>
+      <section className="hope-lower-grid">
+        <div className="zenoh-card hope-limits">
+          <div className="zenoh-card__heading">
+            <div>
+              <h2>{t("hopeLimits")}</h2>
+              <Typography.Text type="secondary">{t("hopeMaxTorque")}</Typography.Text>
+            </div>
+            <Button disabled={!canDrive} onClick={applyLimits}>{t("apply")}</Button>
+          </div>
+          <div className="hope-limit-grid">
+            <Labeled label={t("hopeMaxLinear")}>
+              <InputNumber disabled={!canDrive} min={0} step={0.1} value={maxLinear} onChange={(v) => setMaxLinear(v ?? 0)} />
+            </Labeled>
+            <Labeled label={t("hopeMaxAngular")}>
+              <InputNumber disabled={!canDrive} min={0} step={0.1} value={maxAngular} onChange={(v) => setMaxAngular(v ?? 0)} />
+            </Labeled>
+            <Labeled label={t("hopeAccLinear")}>
+              <InputNumber disabled={!canDrive} min={0} step={0.5} value={accLin} onChange={(v) => setAccLin(v ?? 0)} />
+            </Labeled>
+            <Labeled label={t("hopeAccAngular")}>
+              <InputNumber disabled={!canDrive} min={0} step={0.5} value={accAng} onChange={(v) => setAccAng(v ?? 0)} />
+            </Labeled>
+          </div>
+          <Typography.Text type="secondary">{t("hopeMaxTorque")}</Typography.Text>
+          <div className="hope-triplet">
+            {[0, 1, 2].map((i) => (
+              <InputNumber
+                key={i}
+                disabled={!canDrive}
+                addonBefore={i + 1}
+                min={0}
+                max={1000}
+                value={torque[i]}
+                onChange={(v) => {
+                  const next = [...torque] as [number, number, number];
+                  next[i] = v ?? 0;
+                  applyTorque(next);
+                }}
+              />
+            ))}
+          </div>
+          <Typography.Text type="secondary">{t("hopeKd")}</Typography.Text>
+          <div className="hope-triplet">
+            {[0, 1, 2].map((i) => (
+              <InputNumber
+                key={i}
+                disabled={!canDrive}
+                addonBefore={i + 1}
+                min={0}
+                step={0.05}
+                value={kd[i]}
+                onChange={(v) => {
+                  const next = [...kd] as [number, number, number];
+                  next[i] = v ?? 0;
+                  applyKd(next);
+                }}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="zenoh-card hope-motors">
+          <div className="zenoh-card__heading">
+            <div>
+              <h2>{t("hopeMotorsHdr")}</h2>
+              <Typography.Text type="secondary">{state?.motors?.length ?? 0} motors</Typography.Text>
+            </div>
+          </div>
+          <MotorTable motors={state?.motors ?? []} t={t} onReinit={reinitMotor} busyNid={reinitNid} disabled={!canDrive} />
+        </div>
+      </section>
     </div>
   );
 }
 
 function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div><Typography.Text type="secondary" style={{ fontSize: 12 }}>{label}</Typography.Text></div>
+    <div className="hope-labeled">
+      <div><Typography.Text type="secondary">{label}</Typography.Text></div>
       {children}
     </div>
   );
 }
 
 function MotorTable({
-  motors, t, onReinit, busyNid,
+  motors, t, onReinit, busyNid, disabled,
 }: {
   motors: Hopea3Motor[];
   t: (k: any) => string;
   onReinit: (nid: number) => void;
   busyNid: number | null;
+  disabled: boolean;
 }) {
   return (
     <Table<Hopea3Motor>
@@ -519,6 +501,7 @@ function MotorTable({
             <Button
               size="small"
               danger={!!m.error}
+              disabled={disabled}
               loading={busyNid === m.node_id}
               onClick={() => onReinit(m.node_id)}
             >
@@ -531,109 +514,26 @@ function MotorTable({
   );
 }
 
-const TrajectoryChart = memo(function TrajectoryChart({
-  points, version, poseX, poseY, poseTheta, headingLabel, trajLabel,
-}: {
-  points: { x: number; y: number }[];
-  version: number;
-  poseX: number;
-  poseY: number;
-  poseTheta: number;
-  headingLabel: string;
-  trajLabel: string;
-}) {
-  // Top-down view in ROS convention rotated so the robot's forward (+X) points
-  // UP and left (+Y) points LEFT (like RViz), which reads more naturally than
-  // ECharts' default right=+X. Screen mapping: sx = -rosY, sy = rosX.
-  const toScreen = (rx: number, ry: number): [number, number] => [-ry, rx];
-  const traj = points.map((p) => toScreen(p.x, p.y));
-  const [rsx, rsy] = toScreen(poseX, poseY);
-
-  // Equal-aspect square window around the path + current pose.
-  let minX = rsx, maxX = rsx, minY = rsy, maxY = rsy;
-  for (const [x, y] of traj) {
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-  }
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  const half = Math.max((maxX - minX) / 2, (maxY - minY) / 2, 0.5) * 1.15;
-
-  // Robot marker: a filled "navigation" arrow (Material e55d style) centred on
-  // the pose, pointing along the heading = the car's front. Built in data space
-  // (local forward/left → ROS world → screen) so the rotation is unambiguous —
-  // no reliance on ECharts symbolRotate semantics. Local verts (forward f,
-  // left l): tip, back-left, mid notch, back-right.
-  const arrowR = half * 0.16;
-  const ct = Math.cos(poseTheta), st = Math.sin(poseTheta);
-  const arrowPts = ([[1, 0], [-0.75, 0.62], [-0.4, 0], [-0.75, -0.62]] as [number, number][]).map(
-    ([f, l]) => toScreen(poseX + arrowR * (f * ct - l * st), poseY + arrowR * (f * st + l * ct))
-  );
-
-  const fmtAxis = (v: number) => v.toFixed(2);
-  const axisLine = { lineStyle: { color: "#3a414d" } };
-  const splitLine = { lineStyle: { color: "#222831" } };
-
-  const option = {
-    animation: false,
-    grid: { left: 8, right: 16, top: 28, bottom: 8, containLabel: true },
-    xAxis: {
-      type: "value", name: "← +Y (m)", nameLocation: "center", nameGap: 26,
-      min: cx - half, max: cx + half,
-      axisLine, splitLine,
-      axisLabel: { color: "#8a93a3", formatter: fmtAxis },
-    },
-    yAxis: {
-      type: "value", name: "+X ↑ (m)", nameLocation: "end", nameGap: 8,
-      min: cy - half, max: cy + half,
-      axisLine, splitLine,
-      axisLabel: { color: "#8a93a3", formatter: fmtAxis },
-    },
-    tooltip: {
-      trigger: "item",
-      formatter: (p: any) => (Array.isArray(p.value) ? `${fmtAxis(p.value[1])}, ${fmtAxis(-p.value[0])} m` : ""),
-    },
-    series: [
-      {
-        name: trajLabel,
-        type: "line",
-        showSymbol: false,
-        lineStyle: { width: 2, color: "#4f8cff" },
-        data: traj,
-      },
-      {
-        name: headingLabel,
-        type: "custom",
-        data: [0],
-        z: 5,
-        silent: true,
-        renderItem: (_params: any, api: any) => ({
-          type: "polygon",
-          shape: { points: arrowPts.map((p) => api.coord(p)) },
-          style: { fill: "#f39c12", stroke: "#11151c", lineWidth: 1 },
-        }),
-      },
-    ],
-  };
-
+function MetricGroup({ title, items }: { title: string; items: Array<[string, string]> }) {
   return (
-    <ReactECharts
-      key={version}
-      option={option}
-      notMerge
-      style={{ width: "100%", aspectRatio: "1 / 1", minHeight: 320 }}
-    />
+    <div className="zenoh-metric-group">
+      <Typography.Text strong>{title}</Typography.Text>
+      <div className="zenoh-metric-grid">
+        {items.map(([label, value]) => (
+          <div className="zenoh-metric" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
   );
-});
+}
 
 function fmt(v: number | null | undefined, digits = 3): string {
   if (v == null || Number.isNaN(v)) return "—";
   return v.toFixed(digits);
 }
-
-const round2 = (x: number) => Math.round(x * 100) / 100;
 
 interface Twist { vx: number; vy: number; wz: number }
 
