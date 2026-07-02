@@ -402,6 +402,8 @@ dependencies = [
 [[package]]
 name = "can-transport"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05f754e35c922f5b1ec7973ed5bbb49c15641871baa8412e57b9a389e28e04f6"
 dependencies = [
  "async-trait",
  "futures-util",
