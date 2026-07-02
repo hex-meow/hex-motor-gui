@@ -1,21 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
-import { App as AntdApp, Button, Card, Empty, Layout, Space, theme, Tooltip, Typography } from "antd";
-import { TranslationOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { App as AntdApp, Button, Empty, Layout, Space, Tooltip, Typography } from "antd";
 import { api, errMsg } from "./api";
 import { useI18n } from "./i18n";
 import { ConnectBar } from "./components/ConnectBar";
 import { Sidebar } from "./components/Sidebar";
 import { MotorDetail } from "./components/MotorDetail";
+import { ImuPanel } from "./components/ImuPanel";
 import { ChangeIdTool } from "./components/ChangeIdTool";
 import { ZeroTool } from "./components/ZeroTool";
 import { Hopea3Panel } from "./components/Hopea3Panel";
 import { SmartKnobPanel } from "./components/SmartKnobPanel";
 import { ZenohPanel } from "./components/ZenohPanel";
 import { ArmPanel } from "./components/ArmPanel";
+import { CanAnalyzerPanel } from "./components/CanAnalyzerPanel";
 import { TutorialModal } from "./components/Tutorial";
 import type { MotorInfo } from "./types";
+import "./App.css";
 
-type Tool = "control" | "changeId" | "zero" | "hopea3" | "smartknob" | "zenoh" | "arm";
+type Tool = "control" | "changeId" | "zero" | "hopea3" | "smartknob" | "zenoh" | "arm" | "canalyzer";
 
 const DEVICE_POLL_MS = 700;
 
@@ -114,11 +116,14 @@ export default function App() {
     : tool === "zenoh" ? t("toolBaseZenoh")
     : tool === "arm" ? "Arm (Zenoh)"
     : tool === "smartknob" ? t("toolSmartKnob")
+    : tool === "canalyzer" ? t("toolCanalyzer")
     : t("toolHopeA3");
   const needsHeartbeat = tool === "control" || tool === "hopea3" || tool === "smartknob";
-  // hopea3 / smartknob / zenoh / arm 都是整屏面板;zenoh/arm 走 Zenoh 不用 CAN 总线。
-  const showSidebar = tool !== "hopea3" && tool !== "smartknob" && tool !== "zenoh" && tool !== "arm";
-  const showConnectBar = tool !== "zenoh" && tool !== "arm";
+  // hopea3 / smartknob / zenoh / arm / canalyzer 都是整屏面板;zenoh/arm 走 Zenoh,
+  // canalyzer 自带总线连接,都不使用顶栏的电机 ConnectBar。
+  const showSidebar =
+    tool !== "hopea3" && tool !== "smartknob" && tool !== "zenoh" && tool !== "arm" && tool !== "canalyzer";
+  const showConnectBar = tool !== "zenoh" && tool !== "arm" && tool !== "canalyzer";
 
   return (
     <Layout style={{ height: "100vh" }}>
@@ -169,10 +174,14 @@ export default function App() {
             <ZenohPanel />
           ) : tool === "arm" ? (
             <ArmPanel />
+          ) : tool === "canalyzer" ? (
+            <CanAnalyzerPanel />
           ) : tool === "changeId" ? (
             <ChangeIdTool devices={devices} selectedNid={selectedNid} connected={connected} />
           ) : tool === "zero" ? (
             <ZeroTool devices={devices} selectedNid={selectedNid} connected={connected} />
+          ) : selected && selected.device_type === "imu" ? (
+            <ImuPanel key={selected.node_id} info={selected} connected={connected} />
           ) : selected ? (
             <MotorDetail
               key={selected.node_id}
@@ -195,57 +204,95 @@ export default function App() {
 
 function ToolPicker({ onPick }: { onPick: (t: Tool) => void }) {
   const { t, lang, toggle } = useI18n();
-  const { token } = theme.useToken();
   const [tutorialOpen, setTutorialOpen] = useState(false);
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 24,
-        position: "relative",
-        background: token.colorBgLayout,
-        color: token.colorText,
-      }}
-    >
-      <Tooltip title={lang === "en" ? "切换到中文" : "Switch to English"}>
-        <Button
-          icon={<TranslationOutlined />}
-          onClick={toggle}
-          style={{ position: "absolute", top: 16, right: 16 }}
-        >
-          {lang === "en" ? "中文" : "English"}
-        </Button>
-      </Tooltip>
+    <div className="tool-picker">
+      <div className="tool-picker__actions">
+        <Tooltip title={lang === "en" ? "切换到中文" : "Switch to English"}>
+          <Button className="tool-picker__language" onClick={toggle}>
+            {lang === "en" ? "A中" : "En"}
+          </Button>
+        </Tooltip>
+      </div>
 
-      <Typography.Title level={2} style={{ margin: 0 }}>
-        {t("appTitle")}
-      </Typography.Title>
-      <Typography.Text type="secondary">{t("pickTool")}</Typography.Text>
+      <div className="tool-picker__inner">
+        <header className="tool-picker__hero">
+          <p className="tool-picker__eyebrow">{t("toolPickerEyebrow")}</p>
+          <h1>{t("toolPickerTitle")}</h1>
+          <p>{t("toolPickerLead")}</p>
+        </header>
 
-      <div style={{ width: "100%", maxWidth: 920 }}>
-        <Typography.Text strong style={{ display: "block", marginBottom: 8 }}>
-          {t("catDirectControl")}
-        </Typography.Text>
-        <Space size={16} wrap style={{ justifyContent: "center", width: "100%" }}>
-          <ToolCard title={t("toolControl")} desc={t("toolControlDesc")} onClick={() => onPick("control")} />
-          <ToolCard title={t("toolChangeId")} desc={t("toolChangeIdDesc")} onClick={() => onPick("changeId")} />
-          <ToolCard title={t("toolZero")} desc={t("toolZeroDesc")} onClick={() => onPick("zero")} />
-        </Space>
+        <ToolSection title={t("catMotorControl")} hint={t("catMotorControlHint")}>
+          <ToolCard
+            title={t("toolControl")}
+            desc={t("toolControlDesc")}
+            tag={t("tagLiveControl")}
+            accent="blue"
+            onClick={() => onPick("control")}
+          />
+          <ToolCard
+            title={t("toolSmartKnob")}
+            desc={t("toolSmartKnobDesc")}
+            tag={t("tagHaptics")}
+            accent="lime"
+            onClick={() => onPick("smartknob")}
+          />
+        </ToolSection>
 
-        <Typography.Text strong style={{ display: "block", margin: "24px 0 8px" }}>
-          {t("catRobotApp")}
-        </Typography.Text>
-        <Space size={16} wrap style={{ justifyContent: "center", width: "100%" }}>
-          <ToolCard title={t("toolBaseZenoh")} desc={t("toolBaseZenohDesc")} onClick={() => onPick("zenoh")} />
-          <ToolCard title="Arm (Zenoh)" desc="机械臂:数字孪生 / GRAVITY_COMP / 设重力 / 预设位姿" onClick={() => onPick("arm")} />
-          <ToolCard title={t("toolHopeA3")} desc={t("toolHopeA3Desc")} onClick={() => onPick("hopea3")} />
-          <ToolCard title={t("toolSmartKnob")} desc={t("toolSmartKnobDesc")} onClick={() => onPick("smartknob")} />
-          <ToolCard title={t("toolTutorial")} desc={t("toolTutorialDesc")} onClick={() => setTutorialOpen(true)} />
-        </Space>
+        <ToolSection title={t("catRobotApp")} hint={t("catRobotAppHint")}>
+          <ToolCard
+            title={t("toolBaseZenoh")}
+            desc={t("toolBaseZenohDesc")}
+            tag={t("tagRobotApi")}
+            accent="purple"
+            onClick={() => onPick("zenoh")}
+          />
+          <ToolCard
+            title={t("toolArmZenoh")}
+            desc={t("toolArmZenohDesc")}
+            tag={t("tagManipulator")}
+            accent="pink"
+            onClick={() => onPick("arm")}
+          />
+          <ToolCard
+            title={t("toolHopeA3")}
+            desc={t("toolHopeA3Desc")}
+            tag={t("tagMobileBase")}
+            accent="orange"
+            onClick={() => onPick("hopea3")}
+          />
+        </ToolSection>
+
+        <ToolSection title={t("catTools")} hint={t("catToolsHint")}>
+          <ToolCard
+            title={t("toolChangeId")}
+            desc={t("toolChangeIdDesc")}
+            tag={t("tagFactorySetup")}
+            accent="amber"
+            onClick={() => onPick("changeId")}
+          />
+          <ToolCard
+            title={t("toolZero")}
+            desc={t("toolZeroDesc")}
+            tag={t("tagCalibration")}
+            accent="green"
+            onClick={() => onPick("zero")}
+          />
+          <ToolCard
+            title={t("toolCanalyzer")}
+            desc={t("toolCanalyzerDesc")}
+            tag={t("tagDebug")}
+            accent="cyan"
+            onClick={() => onPick("canalyzer")}
+          />
+          <ToolCard
+            title={t("toolTutorial")}
+            desc={t("toolTutorialDesc")}
+            tag={t("tagQuickStart")}
+            accent="slate"
+            onClick={() => setTutorialOpen(true)}
+          />
+        </ToolSection>
       </div>
 
       <TutorialModal open={tutorialOpen} onClose={() => setTutorialOpen(false)} />
@@ -253,11 +300,36 @@ function ToolPicker({ onPick }: { onPick: (t: Tool) => void }) {
   );
 }
 
-function ToolCard({ title, desc, onClick }: { title: string; desc: string; onClick: () => void }) {
+function ToolSection({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
   return (
-    <Card hoverable style={{ width: 280, height: 180 }} onClick={onClick}>
-      <Typography.Title level={4}>{title}</Typography.Title>
-      <Typography.Paragraph type="secondary">{desc}</Typography.Paragraph>
-    </Card>
+    <section className="tool-section">
+      <div className="tool-section__heading">
+        <h2>{title}</h2>
+        <span>{hint}</span>
+      </div>
+      <div className="tool-section__grid">{children}</div>
+    </section>
+  );
+}
+
+function ToolCard({
+  title,
+  desc,
+  tag,
+  accent,
+  onClick,
+}: {
+  title: string;
+  desc: string;
+  tag: string;
+  accent: "blue" | "amber" | "green" | "cyan" | "purple" | "pink" | "orange" | "lime" | "slate";
+  onClick: () => void;
+}) {
+  return (
+    <button className={`tool-card tool-card--${accent}`} type="button" onClick={onClick}>
+      <span className="tool-card__title">{title}</span>
+      <span className="tool-card__desc">{desc}</span>
+      <span className="tool-card__tag">{tag}</span>
+    </button>
   );
 }

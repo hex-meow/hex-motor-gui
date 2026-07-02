@@ -17,16 +17,27 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use can_transport::CanBus;
 
-pub async fn open_bus(spec: &str) -> Result<Arc<dyn CanBus>> {
+/// Open a bus. `hw_timestamp` asks the backend to stamp received frames with
+/// its hardware clock (gs_usb only, needs firmware support); the returned bool
+/// reports whether that actually engaged.
+pub async fn open_bus(spec: &str, hw_timestamp: bool) -> Result<(Arc<dyn CanBus>, bool)> {
     // gs_usb is cross-platform and selected by a `gs_usb<channel>` spec.
     if let Some(channel) = gs_usb_channel(spec) {
         use can_transport::gs_usb::{GsUsbBus, GsUsbConfig};
         // CAN-FD, 1 Mbit nominal / 5 Mbit data (80 MHz device clock).
-        let bus = GsUsbBus::open(GsUsbConfig::fd_1m_5m().with_channel(channel))
-            .await
-            .with_context(|| format!("opening gs_usb / candleLight channel {channel}"))?;
-        log::info!("gs_usb ch{channel} opened: {:?}", bus.capabilities());
-        return Ok(Arc::new(bus));
+        let bus = GsUsbBus::open(
+            GsUsbConfig::fd_1m_5m()
+                .with_channel(channel)
+                .with_hw_timestamp(hw_timestamp),
+        )
+        .await
+        .with_context(|| format!("opening gs_usb / candleLight channel {channel}"))?;
+        let hw_ts = bus.hw_timestamps_active();
+        log::info!(
+            "gs_usb ch{channel} opened: {:?}, hw_ts={hw_ts}",
+            bus.capabilities()
+        );
+        return Ok((Arc::new(bus), hw_ts));
     }
 
     let (kind, name) = match spec.split_once(':') {
@@ -38,7 +49,9 @@ pub async fn open_bus(spec: &str) -> Result<Arc<dyn CanBus>> {
         "socketcan" => {
             let bus = can_transport::socketcan::SocketCanBus::open(name)
                 .with_context(|| format!("opening SocketCAN interface '{name}'"))?;
-            Ok(Arc::new(bus))
+            // SocketCAN hardware timestamps would need SO_TIMESTAMPING,
+            // which can-transport does not expose yet.
+            Ok((Arc::new(bus), false))
         }
         other => bail!(
             "backend '{other}' is not available on this build \

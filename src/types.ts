@@ -44,6 +44,22 @@ export interface MotorInfo {
   is_ready: boolean;
   can_initialize: boolean;
   peak_torque_nm: number | null;
+  /** Host device kind from the 0x1018 identity: "motor" (default), "imu", … */
+  device_type: string;
+}
+
+// ── IMU (mirrors imu::ImuState) ──
+export interface ImuState {
+  node_id: number;
+  online: boolean;
+  /** Orientation [w, x, y, z], unit quaternion (local→sensor). */
+  quaternion: [number, number, number, number];
+  /** Acceleration [x, y, z] in g. */
+  accel: [number, number, number];
+  /** Angular rate [x, y, z] in deg/s. */
+  gyro: [number, number, number];
+  temp_c: number;
+  counter: number;
 }
 
 export interface Measurements {
@@ -203,6 +219,92 @@ export interface ZenohArmState {
   gravity: [number, number, number];
   has_ee: boolean;
   ee_model: string;
+}
+
+// ── CAN Analyzer (mirrors analyzer.rs DTOs) ──
+export interface CanTraceFrame {
+  seq: number;
+  /** Host receive time (µs since capture start). No hardware timestamp exists. */
+  t_us: number;
+  id: number;
+  extended: boolean;
+  kind: "data" | "fd" | "fd_brs" | "remote";
+  dlc: number;
+  /** Space-separated lower-case hex of the payload ("11 22 aa"). */
+  data: string;
+  dir: "rx" | "tx";
+}
+
+export interface CanAnalyzerStatus {
+  capturing: boolean;
+  total: number;
+  /** Frames dropped by our subscriber queue (GUI backpressure, NOT bus health). */
+  our_dropped: number;
+  distinct_ids: number;
+  agg_overflow: number;
+  ring_len: number;
+  next_seq: number;
+  fd: boolean;
+  max_dlen: number;
+  /** Trace times come from the device's hardware clock (gs_usb hw ts). */
+  hw_ts: boolean;
+}
+
+/** Controller health (analyzer::BusHealthDto). supported=false → render "—". */
+export interface CanBusHealth {
+  supported: boolean;
+  state:
+    | "error_active"
+    | "error_warning"
+    | "error_passive"
+    | "bus_off"
+    | "stopped"
+    | "sleeping"
+    | null;
+  tx_errors: number | null;
+  rx_errors: number | null;
+}
+
+export interface CanTraceReply {
+  frames: CanTraceFrame[];
+  next_seq: number;
+  gap: boolean;
+  status: CanAnalyzerStatus;
+}
+
+export interface CanAggRow {
+  id: number;
+  extended: boolean;
+  count: number;
+  rate_hz: number;
+  last_dlc: number;
+  last_kind: "data" | "fd" | "fd_brs" | "remote";
+  last_data: string;
+  first_us: number;
+  last_us: number;
+}
+
+export interface CanAggReply {
+  rows: CanAggRow[];
+  status: CanAnalyzerStatus;
+}
+
+/** Display filter (tagged union the backend deserializes as analyzer::FilterSpec). */
+export type CanFilterSpec =
+  | { kind: "all" }
+  | { kind: "node"; node: number; include_nodeless: boolean }
+  | { kind: "mask"; id: number; mask: number; extended: boolean };
+
+/** A frame to transmit (analyzer::SendSpec). */
+export interface CanSendSpec {
+  id: number;
+  extended: boolean;
+  fd: boolean;
+  brs: boolean;
+  rtr: boolean;
+  /** Requested DLC for RTR frames (ignored otherwise). */
+  dlc: number;
+  data: number[];
 }
 
 // Tagged target union the backend deserializes (dto::MotorTargetDto).

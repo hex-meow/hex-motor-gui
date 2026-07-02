@@ -3,7 +3,7 @@
 // snake_case parameters.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ArmInfo, BaseInfo, Hopea3InitProgress, Hopea3State, KnobConfig, LiveState, MotorInfo, MotorMode, MotorTarget, SmartKnobState, ZenohArmState, ZenohBaseState } from "./types";
+import type { ArmInfo, BaseInfo, CanAggReply, CanAnalyzerStatus, CanBusHealth, CanFilterSpec, CanSendSpec, CanTraceReply, Hopea3InitProgress, Hopea3State, ImuState, KnobConfig, LiveState, MotorInfo, MotorMode, MotorTarget, SmartKnobState, ZenohArmState, ZenohBaseState } from "./types";
 
 export const api = {
   connect: (iface: string, ourNid: number, broadcastHeartbeat: boolean) =>
@@ -102,6 +102,32 @@ export const api = {
       text: cfg.text,
       ledHue: cfg.led_hue,
     }),
+
+  // IMU
+  imuStart: (nid: number) => invoke<void>("imu_start", { nid }),
+  imuStop: () => invoke<void>("imu_stop"),
+  imuGetState: () => invoke<ImuState>("imu_get_state"),
+  imuBiasTrim: () => invoke<void>("imu_bias_trim"),
+  imuYawReset: () => invoke<void>("imu_yaw_reset"),
+
+  // CAN Analyzer
+  analyzerStart: (spec: string, hwTs: boolean) =>
+    invoke<void>("analyzer_start", { spec, hwTs }),
+  analyzerStop: () => invoke<void>("analyzer_stop"),
+  analyzerBusState: () => invoke<CanBusHealth>("analyzer_bus_state"),
+  analyzerGetTrace: (afterSeq: number, max: number, filter: CanFilterSpec) =>
+    invoke<CanTraceReply>("analyzer_get_trace", { afterSeq, max, filter }),
+  analyzerGetAggregates: (filter: CanFilterSpec) =>
+    invoke<CanAggReply>("analyzer_get_aggregates", { filter }),
+  analyzerGetStatus: () => invoke<CanAnalyzerStatus>("analyzer_get_status"),
+  analyzerClear: () => invoke<number>("analyzer_clear"),
+  analyzerSend: (spec: CanSendSpec) => invoke<void>("analyzer_send", { spec }),
+  // SDO tab (comeow engine over the analyzer's bus). dtype = CiA-309 token
+  // ("u16", "x32", "vs", …) or null for raw-hex rendering on reads.
+  analyzerSdoRead: (node: number, index: number, sub: number, dtype: string | null, timeoutMs: number, retries: number) =>
+    invoke<string>("analyzer_sdo_read", { node, index, sub, dtype, timeoutMs, retries }),
+  analyzerSdoWrite: (node: number, index: number, sub: number, dtype: string, value: string, timeoutMs: number, retries: number) =>
+    invoke<string>("analyzer_sdo_write", { node, index, sub, dtype, value, timeoutMs, retries }),
 
   // Base(Zenoh)
   zenohConnect: (connect: string) => invoke<void>("zenoh_connect", { connect }),

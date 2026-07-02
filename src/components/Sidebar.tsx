@@ -1,4 +1,4 @@
-import { App, Button, Empty, List, Space, Tooltip, Typography } from "antd";
+import { App, Button, Empty, List, Space, Tag, Tooltip, Typography } from "antd";
 import { TranslationOutlined } from "@ant-design/icons";
 import { api, errMsg } from "../api";
 import { nid2hex } from "../format";
@@ -89,8 +89,14 @@ export function Sidebar({
                     </Space>
                     <div style={{ marginTop: 4 }}>
                       <OnlineTag online={d.online} />
-                      <LifecycleTag lc={d.lifecycle} />
-                      <LogicTag logic={d.logic} />
+                      {d.device_type === "imu" ? (
+                        <Tag color="geekblue">IMU</Tag>
+                      ) : (
+                        <>
+                          <LifecycleTag lc={d.lifecycle} />
+                          <LogicTag logic={d.logic} />
+                        </>
+                      )}
                     </div>
                   </div>
                 </List.Item>

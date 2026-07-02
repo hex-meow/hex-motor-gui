@@ -43,7 +43,7 @@ pub async fn connect(
         return Err("already connected; call disconnect() first".into());
     }
 
-    let bus = backend::open_bus(&iface).await.map_err(err)?;
+    let (bus, _hw_ts) = backend::open_bus(&iface, false).await.map_err(err)?;
     let opts = Cia402ManagerOptions {
         heartbeat_node_id: our_nid,
         broadcast_heartbeat,
@@ -63,6 +63,14 @@ pub async fn disconnect(state: State<'_, AppState>) -> CmdResult<()> {
     }
     if let (Some(app), Some(mgr)) = (state.smartknob.lock().await.take(), state.manager().await) {
         app.stop(&mgr).await;
+    }
+    if let Some(app) = state.imu.lock().await.take() {
+        app.stop().await;
+    }
+    // The analyzer owns its own bus, so stop it unconditionally (it may be the
+    // only thing running — the user never called the manager-based connect()).
+    if let Some(app) = state.analyzer.lock().await.take() {
+        app.stop().await;
     }
     // Stop any running CSV recorders first so their files flush cleanly.
     for handle in state.drain_logs() {
@@ -516,6 +524,239 @@ pub async fn smartknob_get_state(
         Some(app) => app.state(),
         None => crate::smartknob::SmartKnobState::default(),
     })
+}
+
+// ───────────────────────────── IMU ──────────────────────────────
+
+/// Start streaming the selected IMU: NMT-Start it Operational and subscribe to
+/// its TPDO1 (quaternion + accel + gyro + temp).
+#[tauri::command]
+pub async fn imu_start(state: State<'_, AppState>, nid: u8) -> CmdResult<()> {
+    let mgr = manager(&state).await?;
+    let mut guard = state.imu.lock().await;
+    if guard.is_some() {
+        return Err("IMU already running; stop it first".into());
+    }
+    let app = crate::imu::ImuManager::start(mgr, nid).await.map_err(err)?;
+    *guard = Some(app);
+    log::info!("IMU started on 0x{nid:02X}");
+    Ok(())
+}
+
+/// Stop the IMU stream and return the device to Pre-Operational.
+#[tauri::command]
+pub async fn imu_stop(state: State<'_, AppState>) -> CmdResult<()> {
+    if let Some(app) = state.imu.lock().await.take() {
+        app.stop().await;
+        log::info!("IMU stopped");
+    }
+    Ok(())
+}
+
+/// Poll the latest IMU snapshot (quaternion, accel, gyro, temp, counter).
+#[tauri::command]
+pub async fn imu_get_state(state: State<'_, AppState>) -> CmdResult<crate::imu::ImuState> {
+    Ok(match state.imu.lock().await.as_ref() {
+        Some(app) => app.state(),
+        None => crate::imu::ImuState::default(),
+    })
+}
+
+/// Trigger a still gyro-bias calibration (hold the device motionless).
+#[tauri::command]
+pub async fn imu_bias_trim(state: State<'_, AppState>) -> CmdResult<()> {
+    let guard = state.imu.lock().await;
+    let app = guard.as_ref().ok_or_else(|| "IMU not running".to_string())?;
+    app.bias_trim().await.map_err(err)
+}
+
+/// Zero the IMU yaw (re-level from gravity).
+#[tauri::command]
+pub async fn imu_yaw_reset(state: State<'_, AppState>) -> CmdResult<()> {
+    let guard = state.imu.lock().await;
+    let app = guard.as_ref().ok_or_else(|| "IMU not running".to_string())?;
+    app.yaw_reset().await.map_err(err)
+}
+
+// ───────────────────────────── CAN Analyzer ─────────────────────────────
+
+/// Open `spec` (e.g. `"can0"`, `"gs_usb"`) as a fresh bus and start capturing
+/// all traffic. Independent of the motor `connect()` — the analyzer owns its
+/// bus. `hw_ts` requests device hardware timestamps (gs_usb, firmware-gated;
+/// silently degrades to host timestamps — see the status `hw_ts` flag).
+#[tauri::command]
+pub async fn analyzer_start(state: State<'_, AppState>, spec: String, hw_ts: bool) -> CmdResult<()> {
+    let mut guard = state.analyzer.lock().await;
+    if guard.is_some() {
+        return Err("analyzer already running; stop it first".into());
+    }
+    let app = crate::analyzer::CanAnalyzer::start(&spec, hw_ts)
+        .await
+        .map_err(err)?;
+    *guard = Some(app);
+    log::info!("CAN analyzer started on {spec:?} (hw_ts requested: {hw_ts})");
+    Ok(())
+}
+
+/// Poll controller health (state + TX/RX error counters) from the backend.
+/// Slow-changing — the UI polls this at ~1 Hz, separate from the trace.
+#[tauri::command]
+pub async fn analyzer_bus_state(
+    state: State<'_, AppState>,
+) -> CmdResult<crate::analyzer::BusHealthDto> {
+    // Clone the bus out and drop the guard: netlink / USB control transfers
+    // take milliseconds and must not block the trace polls.
+    let bus = {
+        let guard = state.analyzer.lock().await;
+        match guard.as_ref() {
+            Some(app) => app.bus_handle(),
+            None => return Ok(crate::analyzer::BusHealthDto::default()),
+        }
+    };
+    let s = bus.bus_state().await.map_err(err)?;
+    Ok(crate::analyzer::BusHealthDto::from_state(s))
+}
+
+/// Stop capturing and release the analyzer's bus. No-op if not running.
+#[tauri::command]
+pub async fn analyzer_stop(state: State<'_, AppState>) -> CmdResult<()> {
+    if let Some(app) = state.analyzer.lock().await.take() {
+        app.stop().await;
+        log::info!("CAN analyzer stopped");
+    }
+    Ok(())
+}
+
+/// Poll a bounded trace slice: frames after `after_seq` (up to `max`) passing
+/// `filter`. Returns a `gap` flag when older frames were evicted.
+#[tauri::command]
+pub async fn analyzer_get_trace(
+    state: State<'_, AppState>,
+    after_seq: u64,
+    max: u32,
+    filter: crate::analyzer::FilterSpec,
+) -> CmdResult<crate::analyzer::TraceReplyDto> {
+    Ok(match state.analyzer.lock().await.as_ref() {
+        Some(app) => app.get_trace(after_seq, max, &filter),
+        None => crate::analyzer::TraceReplyDto::idle(),
+    })
+}
+
+/// Poll the per-ID aggregate table (for the "grouped by ID" view).
+#[tauri::command]
+pub async fn analyzer_get_aggregates(
+    state: State<'_, AppState>,
+    filter: crate::analyzer::FilterSpec,
+) -> CmdResult<crate::analyzer::AggReplyDto> {
+    Ok(match state.analyzer.lock().await.as_ref() {
+        Some(app) => app.get_aggregates(&filter),
+        None => crate::analyzer::AggReplyDto::idle(),
+    })
+}
+
+/// Poll analyzer status only (rate/drops/distinct ids/capabilities).
+#[tauri::command]
+pub async fn analyzer_get_status(
+    state: State<'_, AppState>,
+) -> CmdResult<crate::analyzer::AnalyzerStatusDto> {
+    Ok(match state.analyzer.lock().await.as_ref() {
+        Some(app) => app.get_status(),
+        None => crate::analyzer::AnalyzerStatusDto::idle(),
+    })
+}
+
+/// Empty the ring + aggregates + counters. Returns the cursor the frontend should
+/// adopt so post-clear frames aren't treated as a gap.
+#[tauri::command]
+pub async fn analyzer_clear(state: State<'_, AppState>) -> CmdResult<u64> {
+    Ok(match state.analyzer.lock().await.as_ref() {
+        Some(app) => app.clear(),
+        None => 0,
+    })
+}
+
+/// Manually transmit a frame (and show it locally as a `tx` row).
+#[tauri::command]
+pub async fn analyzer_send(
+    state: State<'_, AppState>,
+    spec: crate::analyzer::SendSpec,
+) -> CmdResult<()> {
+    let guard = state.analyzer.lock().await;
+    let app = guard
+        .as_ref()
+        .ok_or_else(|| "analyzer not running".to_string())?;
+    app.send(spec).await.map_err(err)
+}
+
+/// Clone the SDO handles out of the analyzer guard so the (possibly
+/// seconds-long, retrying) transfer never blocks the trace-poll commands.
+async fn sdo_handles(
+    state: &AppState,
+) -> CmdResult<(
+    std::sync::Arc<dyn can_transport::CanBus>,
+    std::sync::Arc<tokio::sync::Mutex<()>>,
+)> {
+    let guard = state.analyzer.lock().await;
+    let app = guard
+        .as_ref()
+        .ok_or_else(|| "analyzer not running".to_string())?;
+    Ok(app.sdo_handles())
+}
+
+/// SDO read (upload) on the analyzer's bus — the comeow engine. `dtype` is a
+/// CiA-309 token (`u16`, `x32`, `vs`, …) or `None` for raw-hex rendering.
+#[tauri::command]
+pub async fn analyzer_sdo_read(
+    state: State<'_, AppState>,
+    node: u8,
+    index: u16,
+    sub: u8,
+    dtype: Option<String>,
+    timeout_ms: u64,
+    retries: u8,
+) -> CmdResult<String> {
+    let (bus, lock) = sdo_handles(&state).await?;
+    let _serialized = lock.lock().await; // one SDO transfer at a time
+    crate::sdo_client::read(
+        &bus,
+        node,
+        index,
+        sub,
+        dtype.as_deref(),
+        std::time::Duration::from_millis(timeout_ms.max(10)),
+        // canopen-sdo's parameter is *total attempts* (clamped ≥1); the UI
+        // exposes "retries", so N retries = N+1 attempts.
+        retries.saturating_add(1),
+    )
+    .await
+}
+
+/// SDO write (download) on the analyzer's bus. Value is encoded per `dtype`.
+#[tauri::command]
+pub async fn analyzer_sdo_write(
+    state: State<'_, AppState>,
+    node: u8,
+    index: u16,
+    sub: u8,
+    dtype: String,
+    value: String,
+    timeout_ms: u64,
+    retries: u8,
+) -> CmdResult<String> {
+    let (bus, lock) = sdo_handles(&state).await?;
+    let _serialized = lock.lock().await;
+    crate::sdo_client::write(
+        &bus,
+        node,
+        index,
+        sub,
+        &dtype,
+        &value,
+        std::time::Duration::from_millis(timeout_ms.max(10)),
+        // Total attempts = UI retries + 1 (see analyzer_sdo_read).
+        retries.saturating_add(1),
+    )
+    .await
 }
 
 // ───────────────────────── Base(Zenoh) ─────────────────────────

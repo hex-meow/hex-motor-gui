@@ -3,11 +3,15 @@
 //! Wires the [`AppState`] into Tauri-managed state and registers every
 //! `#[tauri::command]` defined in [`commands`].
 
+mod analyzer;
 mod backend;
 mod commands;
+mod device_registry;
 mod dto;
 mod hopea3;
+mod imu;
 mod logging;
+mod sdo_client;
 mod smartknob;
 mod state;
 mod zenoh_arm;
@@ -63,6 +67,21 @@ pub fn run() {
             commands::smartknob_clear_error,
             commands::smartknob_get_state,
             commands::smartknob_set_custom_config,
+            commands::imu_start,
+            commands::imu_stop,
+            commands::imu_get_state,
+            commands::imu_bias_trim,
+            commands::imu_yaw_reset,
+            commands::analyzer_start,
+            commands::analyzer_stop,
+            commands::analyzer_bus_state,
+            commands::analyzer_get_trace,
+            commands::analyzer_get_aggregates,
+            commands::analyzer_get_status,
+            commands::analyzer_clear,
+            commands::analyzer_send,
+            commands::analyzer_sdo_read,
+            commands::analyzer_sdo_write,
             commands::zenoh_connect,
             commands::zenoh_disconnect,
             commands::zenoh_discover,

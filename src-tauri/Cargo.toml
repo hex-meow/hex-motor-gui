@@ -17,6 +17,8 @@ protoc-bin-vendored = "3"   # 自带 protoc,免系统安装
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
+# analyzer.rs 的 TxMirror 要给 can-transport 的 #[async_trait] trait 写 impl。
+async-trait = "0.1"
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
 log = "0.4"
@@ -27,6 +29,10 @@ chrono = "0.4"
 # config builder). Switch back to a crates.io version once published.
 # hex-motor = { path = "../../hex-motor" }
 hex-motor = "0.1.1"
+
+# CAN Analyzer 的 SDO tab:纯 SDO 客户端(读/写对象字典),与 comeow CLI 同一引擎,
+# 跑在分析仪已持有的 Arc<dyn CanBus> 上。值编解码逻辑移植自 comeow(见 sdo_client.rs)。
+canopen-sdo = { version = "0.1.1", default-features = false, features = ["tokio"] }
 
 # Base(Zenoh):连 hex-controller 暴露的 robot_api。
 zenoh = "1"
@@ -42,7 +48,13 @@ hex-arm-dynamics = "0.1.0"
 # can-transport comes from crates.io (same source hex-motor uses), so the
 # `CanBus` trait is a single type across the graph — no [patch] needed.
 [target.'cfg(target_os = "linux")'.dependencies]
-can-transport = { version = "0.1.1", features = ["socketcan", "gs_usb"] }
+can-transport = { version = "0.1.2", features = ["socketcan", "gs_usb"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-can-transport = { version = "0.1.1", features = ["gs_usb"] }
+can-transport = { version = "0.1.2", features = ["gs_usb"] }
+
+# Phase B 开发期:本地 can-transport 0.1.2(bus_state + gs_usb 硬件时间戳)。
+# patch 作用于整个依赖图(hex-motor / canopen-sdo 也拿到 0.1.2,满足其 ^0.1.1),
+# 因此 `dyn CanBus` 仍是同一类型。0.1.2 发布到 crates.io 后删除本节。
+[patch.crates-io]
+can-transport = { path = "../../can-transport" }

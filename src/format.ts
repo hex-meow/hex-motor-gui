@@ -15,7 +15,8 @@ export function parseNid(s: string): number {
   const n =
     t.toLowerCase().startsWith("0x") ? parseInt(t.slice(2), 16) : Number(t);
   if (!Number.isInteger(n) || n < 1 || n > 127) {
-    throw new Error(`节点号需在 1..127, 收到 '${s}'`);
+    // Locale-neutral: surfaces in both zh and en result logs.
+    throw new Error(`node id must be 1..127 (节点号需在 1..127), got '${s}'`);
   }
   return n;
 }
