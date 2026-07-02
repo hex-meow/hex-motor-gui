@@ -48,7 +48,13 @@ hex-arm-dynamics = "0.1.0"
 # can-transport comes from crates.io (same source hex-motor uses), so the
 # `CanBus` trait is a single type across the graph — no [patch] needed.
 [target.'cfg(target_os = "linux")'.dependencies]
-can-transport = { version = "0.1.1", features = ["socketcan", "gs_usb"] }
+can-transport = { version = "0.1.2", features = ["socketcan", "gs_usb"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-can-transport = { version = "0.1.1", features = ["gs_usb"] }
+can-transport = { version = "0.1.2", features = ["gs_usb"] }
+
+# Phase B 开发期:本地 can-transport 0.1.2(bus_state + gs_usb 硬件时间戳)。
+# patch 作用于整个依赖图(hex-motor / canopen-sdo 也拿到 0.1.2,满足其 ^0.1.1),
+# 因此 `dyn CanBus` 仍是同一类型。0.1.2 发布到 crates.io 后删除本节。
+[patch.crates-io]
+can-transport = { path = "../../can-transport" }

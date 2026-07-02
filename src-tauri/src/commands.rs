@@ -43,7 +43,7 @@ pub async fn connect(
         return Err("already connected; call disconnect() first".into());
     }
 
-    let bus = backend::open_bus(&iface).await.map_err(err)?;
+    let (bus, _hw_ts) = backend::open_bus(&iface, false).await.map_err(err)?;
     let opts = Cia402ManagerOptions {
         heartbeat_node_id: our_nid,
         broadcast_heartbeat,
@@ -518,17 +518,40 @@ pub async fn imu_yaw_reset(state: State<'_, AppState>) -> CmdResult<()> {
 // ───────────────────────────── CAN Analyzer ─────────────────────────────
 
 /// Open `spec` (e.g. `"can0"`, `"gs_usb"`) as a fresh bus and start capturing
-/// all traffic. Independent of the motor `connect()` — the analyzer owns its bus.
+/// all traffic. Independent of the motor `connect()` — the analyzer owns its
+/// bus. `hw_ts` requests device hardware timestamps (gs_usb, firmware-gated;
+/// silently degrades to host timestamps — see the status `hw_ts` flag).
 #[tauri::command]
-pub async fn analyzer_start(state: State<'_, AppState>, spec: String) -> CmdResult<()> {
+pub async fn analyzer_start(state: State<'_, AppState>, spec: String, hw_ts: bool) -> CmdResult<()> {
     let mut guard = state.analyzer.lock().await;
     if guard.is_some() {
         return Err("analyzer already running; stop it first".into());
     }
-    let app = crate::analyzer::CanAnalyzer::start(&spec).await.map_err(err)?;
+    let app = crate::analyzer::CanAnalyzer::start(&spec, hw_ts)
+        .await
+        .map_err(err)?;
     *guard = Some(app);
-    log::info!("CAN analyzer started on {spec:?}");
+    log::info!("CAN analyzer started on {spec:?} (hw_ts requested: {hw_ts})");
     Ok(())
+}
+
+/// Poll controller health (state + TX/RX error counters) from the backend.
+/// Slow-changing — the UI polls this at ~1 Hz, separate from the trace.
+#[tauri::command]
+pub async fn analyzer_bus_state(
+    state: State<'_, AppState>,
+) -> CmdResult<crate::analyzer::BusHealthDto> {
+    // Clone the bus out and drop the guard: netlink / USB control transfers
+    // take milliseconds and must not block the trace polls.
+    let bus = {
+        let guard = state.analyzer.lock().await;
+        match guard.as_ref() {
+            Some(app) => app.bus_handle(),
+            None => return Ok(crate::analyzer::BusHealthDto::default()),
+        }
+    };
+    let s = bus.bus_state().await.map_err(err)?;
+    Ok(crate::analyzer::BusHealthDto::from_state(s))
 }
 
 /// Stop capturing and release the analyzer's bus. No-op if not running.

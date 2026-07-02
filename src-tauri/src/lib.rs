@@ -73,6 +73,7 @@ pub fn run() {
             commands::imu_yaw_reset,
             commands::analyzer_start,
             commands::analyzer_stop,
+            commands::analyzer_bus_state,
             commands::analyzer_get_trace,
             commands::analyzer_get_aggregates,
             commands::analyzer_get_status,

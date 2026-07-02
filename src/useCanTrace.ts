@@ -8,10 +8,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { CanAggRow, CanAnalyzerStatus, CanFilterSpec, CanTraceFrame } from "./types";
+import type { CanAggRow, CanAnalyzerStatus, CanBusHealth, CanFilterSpec, CanTraceFrame } from "./types";
 
 const POLL_MS = 50; // 20 Hz backend drain
 const RENDER_MS = 100; // 10 Hz UI tick
+const HEALTH_MS = 1000; // 1 Hz controller-health poll (netlink / USB control)
 const MAX_ROWS = 3000; // client trace buffer cap
 const MAX_BATCH = 2000; // frames requested per poll
 const RATE_WINDOW_MS = 1500; // rolling window for the fps estimate (smooths sparse traffic)
@@ -38,6 +39,8 @@ export interface CanTraceState {
   /** performance.now() of the last time the frame count increased. The strip
    *  derives active/idle from this (vs ACTIVE_WINDOW_MS), not instantaneous rate. */
   lastActivityRef: React.MutableRefObject<number>;
+  /** Controller health (error counters / bus-off), polled at 1 Hz. */
+  healthRef: React.MutableRefObject<CanBusHealth | null>;
   version: number;
   /** Clear backend + local buffers and reset the cursor. */
   clear: () => Promise<void>;
@@ -56,6 +59,7 @@ export function useCanTrace(
   const gapRef = useRef(false);
   const evictedRef = useRef(0);
   const lastActivityRef = useRef(0);
+  const healthRef = useRef<CanBusHealth | null>(null);
   const rateWindowRef = useRef<{ t: number; total: number }[]>([]);
   const cursorRef = useRef(0);
   const pausedRef = useRef(paused);
@@ -93,6 +97,7 @@ export function useCanTrace(
     if (!running) {
       resetLocal();
       statusRef.current = null;
+      healthRef.current = null;
       return;
     }
     // Filter/mode changed → re-pull from the ring start with the new predicate.
@@ -149,13 +154,29 @@ export function useCanTrace(
       if (alive && !pausedRef.current) setVersion((v) => v + 1);
     }, RENDER_MS);
 
+    let healthFails = 0;
+    const health = window.setInterval(async () => {
+      try {
+        const h = await api.analyzerBusState();
+        if (alive) {
+          healthRef.current = h;
+          healthFails = 0;
+        }
+      } catch {
+        // Don't let a stale chip pretend to be fresh: drop it after a few
+        // consecutive failures (transient errors are still tolerated).
+        if (alive && ++healthFails >= 3) healthRef.current = null;
+      }
+    }, HEALTH_MS);
+
     return () => {
       alive = false;
       window.clearInterval(poll);
       window.clearInterval(tick);
+      window.clearInterval(health);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, mode, filterKey]);
 
-  return { bufRef, groupedRef, statusRef, rateRef, gapRef, evictedRef, lastActivityRef, version, clear };
+  return { bufRef, groupedRef, statusRef, rateRef, gapRef, evictedRef, lastActivityRef, healthRef, version, clear };
 }

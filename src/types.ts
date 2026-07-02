@@ -236,6 +236,23 @@ export interface CanAnalyzerStatus {
   next_seq: number;
   fd: boolean;
   max_dlen: number;
+  /** Trace times come from the device's hardware clock (gs_usb hw ts). */
+  hw_ts: boolean;
+}
+
+/** Controller health (analyzer::BusHealthDto). supported=false → render "—". */
+export interface CanBusHealth {
+  supported: boolean;
+  state:
+    | "error_active"
+    | "error_warning"
+    | "error_passive"
+    | "bus_off"
+    | "stopped"
+    | "sleeping"
+    | null;
+  tx_errors: number | null;
+  rx_errors: number | null;
 }
 
 export interface CanTraceReply {

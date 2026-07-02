@@ -3,7 +3,7 @@
 // snake_case parameters.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ArmInfo, BaseInfo, CanAggReply, CanAnalyzerStatus, CanFilterSpec, CanSendSpec, CanTraceReply, Hopea3InitProgress, Hopea3State, ImuState, KnobConfig, LiveState, MotorInfo, MotorMode, MotorTarget, SmartKnobState, ZenohArmState, ZenohBaseState } from "./types";
+import type { ArmInfo, BaseInfo, CanAggReply, CanAnalyzerStatus, CanBusHealth, CanFilterSpec, CanSendSpec, CanTraceReply, Hopea3InitProgress, Hopea3State, ImuState, KnobConfig, LiveState, MotorInfo, MotorMode, MotorTarget, SmartKnobState, ZenohArmState, ZenohBaseState } from "./types";
 
 export const api = {
   connect: (iface: string, ourNid: number, broadcastHeartbeat: boolean) =>
@@ -76,8 +76,10 @@ export const api = {
   imuYawReset: () => invoke<void>("imu_yaw_reset"),
 
   // CAN Analyzer
-  analyzerStart: (spec: string) => invoke<void>("analyzer_start", { spec }),
+  analyzerStart: (spec: string, hwTs: boolean) =>
+    invoke<void>("analyzer_start", { spec, hwTs }),
   analyzerStop: () => invoke<void>("analyzer_stop"),
+  analyzerBusState: () => invoke<CanBusHealth>("analyzer_bus_state"),
   analyzerGetTrace: (afterSeq: number, max: number, filter: CanFilterSpec) =>
     invoke<CanTraceReply>("analyzer_get_trace", { afterSeq, max, filter }),
   analyzerGetAggregates: (filter: CanFilterSpec) =>

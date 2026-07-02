@@ -81,6 +81,7 @@ export function CanAnalyzerPanel() {
   const { t } = useI18n();
 
   const [iface, setIface] = useState(DEFAULT_IFACE);
+  const [hwTs, setHwTs] = useState(true);
   const [running, setRunning] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
@@ -112,7 +113,7 @@ export function CanAnalyzerPanel() {
     return { kind: "all" };
   }, [filterType, node, includeNodeless, maskIdStr, maskStr, maskExt]);
 
-  const { bufRef, groupedRef, statusRef, rateRef, gapRef, evictedRef, lastActivityRef, version, clear } =
+  const { bufRef, groupedRef, statusRef, rateRef, gapRef, evictedRef, lastActivityRef, healthRef, version, clear } =
     useCanTrace(running, mode, filter, paused);
 
   // Stop capture on unmount (tool switch also calls disconnect() as a safety net).
@@ -125,7 +126,7 @@ export function CanAnalyzerPanel() {
   const connect = async () => {
     setConnecting(true);
     try {
-      await api.analyzerStart(iface.trim());
+      await api.analyzerStart(iface.trim(), hwTs);
       setRunning(true);
     } catch (e) {
       message.error(`${t("canConnectFailed")}: ${errMsg(e)}`);
@@ -164,6 +165,11 @@ export function CanAnalyzerPanel() {
               placeholder="can0 / gs_usb"
             />
           </Tooltip>
+          <Tooltip title={t("canHwTsHint")}>
+            <Checkbox checked={hwTs} disabled={running} onChange={(e) => setHwTs(e.target.checked)}>
+              {t("canHwTs")}
+            </Checkbox>
+          </Tooltip>
           {running ? (
             <Button danger onClick={disconnect}>
               {t("disconnect")}
@@ -185,6 +191,8 @@ export function CanAnalyzerPanel() {
         distinct={status?.distinct_ids ?? 0}
         guiDrops={status?.our_dropped ?? 0}
         aggOverflow={status?.agg_overflow ?? 0}
+        hwTs={status?.hw_ts ?? false}
+        health={healthRef.current}
       />
 
       <Row gutter={12}>
@@ -315,6 +323,22 @@ export function CanAnalyzerPanel() {
   );
 }
 
+/** Chip color per controller state, matching CAN fault-confinement severity. */
+function stateColor(s: string): string {
+  switch (s) {
+    case "error_active":
+      return "green";
+    case "error_warning":
+      return "gold";
+    case "error_passive":
+      return "orange";
+    case "bus_off":
+      return "red";
+    default:
+      return "default"; // stopped / sleeping
+  }
+}
+
 function StatusStrip({
   running,
   active,
@@ -323,6 +347,8 @@ function StatusStrip({
   distinct,
   guiDrops,
   aggOverflow,
+  hwTs,
+  health,
 }: {
   running: boolean;
   active: boolean;
@@ -331,9 +357,12 @@ function StatusStrip({
   distinct: number;
   guiDrops: number;
   aggOverflow: number;
+  hwTs: boolean;
+  health: import("../types").CanBusHealth | null;
 }) {
   const { t } = useI18n();
   void aggOverflow;
+  const stateKey = health?.supported && health.state ? health.state : null;
   return (
     <Card size="small">
       <Space wrap size={24}>
@@ -341,6 +370,28 @@ function StatusStrip({
           <Tag color={running ? (active ? "green" : "default") : "red"}>
             {running ? (active ? t("canActive") : t("canIdle")) : t("canStopped")}
           </Tag>
+          {running && hwTs && (
+            <Tooltip title={t("canHwTsActiveHint")}>
+              <Tag color="geekblue">HW ts</Tag>
+            </Tooltip>
+          )}
+          {stateKey && (
+            <Tooltip title={t("canCtrlStateHint")}>
+              <Tag color={stateColor(stateKey)}>
+                {stateKey === "error_active"
+                  ? t("canStateErrorActive")
+                  : stateKey === "error_warning"
+                    ? t("canStateErrorWarning")
+                    : stateKey === "error_passive"
+                      ? t("canStateErrorPassive")
+                      : stateKey === "bus_off"
+                        ? t("canStateBusOff")
+                        : stateKey === "stopped"
+                          ? t("canStateStopped")
+                          : t("canStateSleeping")}
+              </Tag>
+            </Tooltip>
+          )}
         </Space>
         <Statistic title={t("canRxRate")} value={running ? Math.round(rate) : 0} suffix="fps" valueStyle={{ fontSize: 18 }} />
         <Statistic title={t("canTotal")} value={total} valueStyle={{ fontSize: 18 }} />
@@ -360,8 +411,16 @@ function StatusStrip({
               <span>{t("canErrCounters")} ⓘ</span>
             </Tooltip>
           }
-          value="—"
-          valueStyle={{ fontSize: 18 }}
+          value={
+            health?.supported && (health.tx_errors != null || health.rx_errors != null)
+              ? `TX ${health.tx_errors ?? "—"} / RX ${health.rx_errors ?? "—"}`
+              : "—"
+          }
+          valueStyle={{
+            fontSize: 18,
+            color:
+              (health?.tx_errors ?? 0) > 0 || (health?.rx_errors ?? 0) > 0 ? "#faad14" : undefined,
+          }}
         />
       </Space>
     </Card>

@@ -14,10 +14,12 @@
 //! is deliberately a debugging tool, not a recorder — old frames roll off the
 //! ring (surfaced to the UI as a `gap`), and there is a hard cap on distinct ids.
 //!
-//! CAN *status*: today we can only surface software-derived health (frame rate,
-//! our own subscriber-drop count, distinct ids). Real controller error counters /
-//! bus-off state need a `can-transport` extension (both backends currently drop
-//! CAN error frames); that is a separate, deferred piece of work.
+//! CAN *status* has two layers: software-derived health (frame rate, our own
+//! subscriber-drop count, distinct ids) computed here, and controller health
+//! (error counters / bus-off) polled on demand through `CanBus::bus_state()` —
+//! netlink on SocketCAN, `GET_STATE` on gs_usb (firmware-gated; `Ok(None)`
+//! renders as unknown). Timestamps prefer the device hardware clock when the
+//! session enabled it (gs_usb), rebased onto the host axis by [`AnalyzerState::display_time`].
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,8 +40,16 @@ const RING_CAP: usize = 8192;
 /// Hard cap on distinct ids tracked in the aggregate map — protects against a
 /// device walking the id space or bus noise. Overflow is counted, not fatal.
 const MAX_IDS: usize = 4096;
-/// EWMA smoothing for the per-ID rate estimate (inter-arrival based).
-const EWMA_ALPHA: f32 = 0.1;
+/// Per-ID rate = frames in the last completed window / actual window length.
+/// A window closes on the first frame ≥ this after it opened, so slow IDs
+/// measure over their real spacing. (Replaces an inter-arrival EWMA: at
+/// connect, frames buffered by the adapter arrive µs apart and seeded the
+/// EWMA with a huge rate that took ~90 frames — 90 s for a 1 Hz heartbeat —
+/// to decay. A window bounds that pollution to one window.)
+const RATE_WINDOW_US: u64 = 2_000_000;
+/// Show 0 Hz for an ID silent this long; the rate would otherwise freeze at
+/// its last value forever.
+const RATE_STALE_US: u64 = 5_000_000;
 /// Never return more than this many trace frames in a single poll, regardless of
 /// what the caller asks for — bounds the IPC payload.
 const MAX_BATCH: u32 = 5000;
@@ -87,8 +97,11 @@ struct AggEntry {
     last_len: u8,
     last_kind: FrameKind,
     last_data: [u8; 64],
-    ewma_hz: f32,
-    have_rate: bool,
+    /// Rate over the last *completed* measurement window (0 until one closes).
+    rate_hz: f32,
+    /// Start of the currently-open window and frames counted since.
+    win_start_us: u64,
+    win_count: u32,
 }
 
 impl AggEntry {
@@ -100,8 +113,11 @@ impl AggEntry {
             last_len: len,
             last_kind: kind,
             last_data: [0u8; 64],
-            ewma_hz: 0.0,
-            have_rate: false,
+            rate_hz: 0.0,
+            // The first frame opens the window but isn't counted in it: rate
+            // is "frames per elapsed time since window start".
+            win_start_us: t_us,
+            win_count: 0,
         };
         // `len` is the DLC (which for a Remote frame is nonzero while `data` is
         // empty), so clamp the copy to the bytes actually present.
@@ -112,16 +128,12 @@ impl AggEntry {
 
     fn update(&mut self, t_us: u64, kind: FrameKind, data: &[u8], len: u8) {
         self.count += 1;
-        // Guard divide-by-zero when two frames share a microsecond (guaranteed at
-        // kHz), and clamp implausible spikes so a coincident-timestamp burst can't
-        // poison the EWMA to +inf.
-        let dt = t_us.saturating_sub(self.last_us).max(1);
-        let inst = (1_000_000.0 / dt as f32).min(1_000_000.0);
-        if self.have_rate {
-            self.ewma_hz = EWMA_ALPHA * inst + (1.0 - EWMA_ALPHA) * self.ewma_hz;
-        } else {
-            self.ewma_hz = inst;
-            self.have_rate = true;
+        self.win_count += 1;
+        let elapsed = t_us.saturating_sub(self.win_start_us);
+        if elapsed >= RATE_WINDOW_US {
+            self.rate_hz = self.win_count as f32 * 1_000_000.0 / elapsed as f32;
+            self.win_start_us = t_us;
+            self.win_count = 0;
         }
         self.last_us = t_us;
         self.last_kind = kind;
@@ -141,6 +153,12 @@ struct AnalyzerState {
     /// distinct ids we could not track because the map hit `MAX_IDS`.
     agg_overflow: u64,
     total: u64,
+    /// Fixed device-clock → host-axis offset (`device_ts − host_elapsed`),
+    /// captured at the first hardware-stamped frame. Stamped frames display
+    /// as `device_ts − offset` ≈ their host arrival time, so their *deltas*
+    /// keep device precision while host-clock rows (TX mirror, pre-first-frame
+    /// rows) sit on the same monotonic axis — no jump when stamping kicks in.
+    hw_offset: Option<i64>,
 }
 
 impl AnalyzerState {
@@ -154,6 +172,23 @@ impl AnalyzerState {
             agg: HashMap::new(),
             agg_overflow: 0,
             total: 0,
+            hw_offset: None,
+        }
+    }
+
+    /// Map a frame's clock onto the session display axis (µs since capture
+    /// start, host timeline). Host-clock rows pass through; hardware-stamped
+    /// frames are rebased with a fixed offset captured at the first stamped
+    /// frame, preserving device-precision deltas on a jump-free shared axis.
+    /// The clocks drift apart only by crystal ppm — irrelevant over a debug
+    /// session, and the staleness/rate math compares within one axis anyway.
+    fn display_time(&mut self, host_us: u64, hw_us: Option<u64>) -> u64 {
+        match hw_us {
+            Some(h) => {
+                let off = *self.hw_offset.get_or_insert(h as i64 - host_us as i64);
+                (h as i64 - off).max(0) as u64
+            }
+            None => host_us,
         }
     }
 
@@ -292,6 +327,8 @@ pub struct AnalyzerStatusDto {
     /// Backend supports CAN-FD (drives the send widget's FD/BRS/64-byte gating).
     pub fd: bool,
     pub max_dlen: u32,
+    /// Trace times come from the device's hardware clock (gs_usb hw ts).
+    pub hw_ts: bool,
 }
 
 impl AnalyzerStatusDto {
@@ -307,6 +344,46 @@ impl AnalyzerStatusDto {
             next_seq: 0,
             fd: false,
             max_dlen: 0,
+            hw_ts: false,
+        }
+    }
+}
+
+/// Controller health snapshot for the status strip (mirrors
+/// `can_transport::CanBusState`, stringly-typed for the frontend).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BusHealthDto {
+    /// `true` when the backend reported anything at all; `false` = unknown
+    /// (backend without support — render "—").
+    pub supported: bool,
+    /// "error_active" | "error_warning" | "error_passive" | "bus_off" |
+    /// "stopped" | "sleeping", when known.
+    pub state: Option<String>,
+    pub tx_errors: Option<u16>,
+    pub rx_errors: Option<u16>,
+}
+
+impl BusHealthDto {
+    pub fn from_state(s: Option<can_transport::CanBusState>) -> Self {
+        use can_transport::CanControllerState as C;
+        match s {
+            None => Self::default(),
+            Some(s) => Self {
+                supported: true,
+                state: s.state.map(|st| {
+                    match st {
+                        C::ErrorActive => "error_active",
+                        C::ErrorWarning => "error_warning",
+                        C::ErrorPassive => "error_passive",
+                        C::BusOff => "bus_off",
+                        C::Stopped => "stopped",
+                        C::Sleeping => "sleeping",
+                    }
+                    .to_string()
+                }),
+                tx_errors: s.tx_errors,
+                rx_errors: s.rx_errors,
+            },
         }
     }
 }
@@ -314,8 +391,9 @@ impl AnalyzerStatusDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceFrameDto {
     pub seq: u64,
-    /// Host receive time (µs since capture start). The crate exposes no hardware
-    /// timestamp, so this is arrival time on the host, adequate for debugging.
+    /// Time in µs since capture start, on one shared session axis: the device
+    /// hardware clock (rebased) when hw timestamps are active, host arrival
+    /// time otherwise (and always for TX rows).
     pub t_us: u64,
     pub id: u32,
     pub extended: bool,
@@ -402,15 +480,16 @@ struct TxMirror {
 impl CanBus for TxMirror {
     async fn send(&self, frame: CanFrame) -> Result<(), CanIoError> {
         self.inner.send(frame).await?;
-        let t_us = self.t0.elapsed().as_micros() as u64;
+        let host_us = self.t0.elapsed().as_micros() as u64;
         let (data, len): (&[u8], u8) = match frame.kind() {
             FrameKind::Remote => (&[], frame.dlc() as u8),
             _ => (frame.data(), frame.data().len() as u8),
         };
-        self.state
-            .lock()
-            .unwrap()
-            .push(frame.id(), frame.kind(), data, len, t_us, Dir::Tx);
+        let mut st = self.state.lock().unwrap();
+        // TX rows are host-clock events; hw-stamped RX frames are rebased onto
+        // this same host axis, so no alignment is needed here.
+        let t_us = st.display_time(host_us, None);
+        st.push(frame.id(), frame.kind(), data, len, t_us, Dir::Tx);
         Ok(())
     }
 
@@ -421,6 +500,11 @@ impl CanBus for TxMirror {
     fn capabilities(&self) -> CanCapabilities {
         self.inner.capabilities()
     }
+
+    // Forward explicitly — the trait default would mask the inner backend.
+    async fn bus_state(&self) -> Result<Option<can_transport::CanBusState>, CanIoError> {
+        self.inner.bus_state().await
+    }
 }
 
 // ─────────────────────────────── session ───────────────────────────────
@@ -428,6 +512,9 @@ impl CanBus for TxMirror {
 /// A running analyzer session: owns its bus and the two drain tasks.
 pub struct CanAnalyzer {
     bus: Arc<dyn CanBus>,
+    /// Session time origin (shared with the drain loops and the mirror);
+    /// used by queries to judge per-ID staleness.
+    t0: Instant,
     /// The bus wrapped in [`TxMirror`] — every transmit path (manual send,
     /// SDO client) goes through this so the trace shows our own frames.
     mirror: Arc<TxMirror>,
@@ -440,12 +527,15 @@ pub struct CanAnalyzer {
     /// mirror so commands never hold the `AppState.analyzer` guard across
     /// the await.
     sdo_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Frames carry device hardware timestamps (requested + supported).
+    hw_ts: bool,
 }
 
 impl CanAnalyzer {
-    /// Open `spec` (e.g. `"can0"`, `"gs_usb"`) as a fresh bus and start capturing.
-    pub async fn start(spec: &str) -> Result<Self> {
-        let bus = crate::backend::open_bus(spec).await?;
+    /// Open `spec` (e.g. `"can0"`, `"gs_usb"`) as a fresh bus and start
+    /// capturing. `hw_timestamp` requests device-clock stamping (gs_usb only).
+    pub async fn start(spec: &str, hw_timestamp: bool) -> Result<Self> {
+        let (bus, hw_ts) = crate::backend::open_bus(spec, hw_timestamp).await?;
         // Two subscriptions: a single CanFilter is standard-XOR-extended.
         let rx_std = bus
             .subscribe(CanFilter::pass_all_standard())
@@ -475,13 +565,21 @@ impl CanAnalyzer {
         log::info!("CAN analyzer capturing on {spec:?} ({:?})", bus.capabilities());
         Ok(Self {
             bus,
+            t0,
             mirror,
             state,
             status,
             std_task,
             ext_task,
             sdo_lock: Arc::new(tokio::sync::Mutex::new(())),
+            hw_ts,
         })
+    }
+
+    /// The raw bus, for on-demand health queries (`bus_state`). Clone out and
+    /// drop the `AppState.analyzer` guard before awaiting.
+    pub fn bus_handle(&self) -> Arc<dyn CanBus> {
+        self.bus.clone()
     }
 
     /// The analyzer's TX-mirrored bus + the SDO serialization lock, cloned out
@@ -528,6 +626,7 @@ impl CanAnalyzer {
     /// The whole (small) per-ID table that passes `filter`. Cloned out under the
     /// lock, formatted after.
     pub fn get_aggregates(&self, filter: &FilterSpec) -> AggReplyDto {
+        let now_us = self.t0.elapsed().as_micros() as u64;
         let (rows, status) = {
             let st = self.state.lock().unwrap();
             let rows: Vec<(AggKey, AggEntry)> = st
@@ -545,7 +644,7 @@ impl CanAnalyzer {
                 .collect();
             (rows, self.status_dto(&st))
         };
-        let rows = rows.into_iter().map(|(k, e)| agg_dto(k, e)).collect();
+        let rows = rows.into_iter().map(|(k, e)| agg_dto(k, e, now_us)).collect();
         AggReplyDto { rows, status }
     }
 
@@ -566,6 +665,7 @@ impl CanAnalyzer {
             next_seq: st.next_seq,
             fd: caps.fd,
             max_dlen: caps.max_dlen as u32,
+            hw_ts: self.hw_ts,
         }
     }
 
@@ -633,15 +733,15 @@ async fn drain_loop(
     loop {
         match rx.recv().await {
             Ok(frame) => {
-                let t_us = t0.elapsed().as_micros() as u64;
+                let host_us = t0.elapsed().as_micros() as u64;
                 let (data, len): (&[u8], u8) = match frame.kind() {
                     FrameKind::Remote => (&[], frame.dlc() as u8),
                     _ => (frame.data(), frame.data().len() as u8),
                 };
-                state
-                    .lock()
-                    .unwrap()
-                    .push(frame.id(), frame.kind(), data, len, t_us, Dir::Rx);
+                let mut st = state.lock().unwrap();
+                // Prefer the device's hardware timestamp when present.
+                let t_us = st.display_time(host_us, frame.timestamp_us());
+                st.push(frame.id(), frame.kind(), data, len, t_us, Dir::Rx);
             }
             // Recoverable: our queue overflowed. Keep capturing — this is exactly
             // when the user needs the trace to stay alive. Only Disconnected ends it.
@@ -698,18 +798,24 @@ fn trace_dto(rec: TraceRecord) -> TraceFrameDto {
     }
 }
 
-fn agg_dto(key: AggKey, e: AggEntry) -> AggRowDto {
+fn agg_dto(key: AggKey, e: AggEntry, now_us: u64) -> AggRowDto {
     let (raw, extended) = key;
     let last_data = if matches!(e.last_kind, FrameKind::Remote) {
         String::new()
     } else {
         hex(&e.last_data[..e.last_len as usize])
     };
+    // An ID that went silent shows 0 Hz instead of freezing at its last rate.
+    let rate_hz = if now_us.saturating_sub(e.last_us) > RATE_STALE_US {
+        0.0
+    } else {
+        e.rate_hz
+    };
     AggRowDto {
         id: raw,
         extended,
         count: e.count,
-        rate_hz: if e.ewma_hz.is_finite() { e.ewma_hz } else { 0.0 },
+        rate_hz,
         last_dlc: e.last_len,
         last_kind: kind_str(e.last_kind).to_string(),
         last_data,
