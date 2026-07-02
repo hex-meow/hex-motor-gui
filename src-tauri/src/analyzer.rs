@@ -25,7 +25,10 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use can_transport::{CanBus, CanFilter, CanFrame, CanId, CanIoError, CanRx, FrameKind};
+use async_trait::async_trait;
+use can_transport::{
+    CanBus, CanCapabilities, CanFilter, CanFrame, CanId, CanIoError, CanRx, FrameKind,
+};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
@@ -374,19 +377,68 @@ impl AggReplyDto {
     }
 }
 
+// ─────────────────────────────── TX mirror ───────────────────────────────
+
+/// Decorator around the analyzer's bus: every successful `send()` is also
+/// recorded into the trace ring as a `dir=tx` row.
+///
+/// Neither backend delivers our own transmissions back to us (gs_usb drops its
+/// TX-completion echoes in `parse_host_frame`; SocketCAN's sending socket has
+/// `CAN_RAW_RECV_OWN_MSGS` off and can-transport never enables it), so without
+/// this the trace would show SDO *responses* but not our *requests*. Handing
+/// this wrapper to anything that transmits (manual send, the SDO client) makes
+/// all analyzer-originated traffic visible on one path.
+///
+/// Semantics note: a `tx` row means "accepted by the driver/adapter", not
+/// "ACKed on the wire" — a true wire-confirmed echo needs can-transport
+/// support (gs_usb echo frames / SocketCAN RECV_OWN_MSGS + MSG_CONFIRM).
+struct TxMirror {
+    inner: Arc<dyn CanBus>,
+    state: Arc<StdMutex<AnalyzerState>>,
+    t0: Instant,
+}
+
+#[async_trait]
+impl CanBus for TxMirror {
+    async fn send(&self, frame: CanFrame) -> Result<(), CanIoError> {
+        self.inner.send(frame).await?;
+        let t_us = self.t0.elapsed().as_micros() as u64;
+        let (data, len): (&[u8], u8) = match frame.kind() {
+            FrameKind::Remote => (&[], frame.dlc() as u8),
+            _ => (frame.data(), frame.data().len() as u8),
+        };
+        self.state
+            .lock()
+            .unwrap()
+            .push(frame.id(), frame.kind(), data, len, t_us, Dir::Tx);
+        Ok(())
+    }
+
+    async fn subscribe(&self, filter: CanFilter) -> Result<Box<dyn CanRx>, CanIoError> {
+        self.inner.subscribe(filter).await
+    }
+
+    fn capabilities(&self) -> CanCapabilities {
+        self.inner.capabilities()
+    }
+}
+
 // ─────────────────────────────── session ───────────────────────────────
 
 /// A running analyzer session: owns its bus and the two drain tasks.
 pub struct CanAnalyzer {
     bus: Arc<dyn CanBus>,
-    t0: Instant,
+    /// The bus wrapped in [`TxMirror`] — every transmit path (manual send,
+    /// SDO client) goes through this so the trace shows our own frames.
+    mirror: Arc<TxMirror>,
     state: Arc<StdMutex<AnalyzerState>>,
     status: Arc<AnalyzerStatus>,
     std_task: JoinHandle<()>,
     ext_task: JoinHandle<()>,
     /// Serializes SDO-tab operations (one transfer at a time, like comeow's
-    /// single executor task). Cloned out of the session together with `bus`
-    /// so commands never hold the `AppState.analyzer` guard across the await.
+    /// single executor task). Cloned out of the session together with the
+    /// mirror so commands never hold the `AppState.analyzer` guard across
+    /// the await.
     sdo_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -414,10 +466,16 @@ impl CanAnalyzer {
         let std_task = tokio::spawn(drain_loop(rx_std, state.clone(), status.clone(), t0));
         let ext_task = tokio::spawn(drain_loop(rx_ext, state.clone(), status.clone(), t0));
 
+        let mirror = Arc::new(TxMirror {
+            inner: bus.clone(),
+            state: state.clone(),
+            t0,
+        });
+
         log::info!("CAN analyzer capturing on {spec:?} ({:?})", bus.capabilities());
         Ok(Self {
             bus,
-            t0,
+            mirror,
             state,
             status,
             std_task,
@@ -426,11 +484,12 @@ impl CanAnalyzer {
         })
     }
 
-    /// The analyzer's bus + the SDO serialization lock, cloned out so the
-    /// caller can drop the `AppState.analyzer` guard before awaiting a
-    /// (possibly seconds-long, with retries) SDO transfer.
+    /// The analyzer's TX-mirrored bus + the SDO serialization lock, cloned out
+    /// so the caller can drop the `AppState.analyzer` guard before awaiting a
+    /// (possibly seconds-long, with retries) SDO transfer. Because the SDO
+    /// client sends through the mirror, its requests appear in the trace.
     pub fn sdo_handles(&self) -> (Arc<dyn CanBus>, Arc<tokio::sync::Mutex<()>>) {
-        (self.bus.clone(), self.sdo_lock.clone())
+        (self.mirror.clone() as Arc<dyn CanBus>, self.sdo_lock.clone())
     }
 
     /// Cursor-based trace slice: frames with `seq > after_seq`, up to `max`, that
@@ -521,9 +580,8 @@ impl CanAnalyzer {
         st.next_seq.saturating_sub(1)
     }
 
-    /// Transmit a frame and inject a synthetic `tx` row so the user always sees
-    /// their send — gs_usb drops the device's own echo, so relying on the RX path
-    /// would make manual send look broken on that backend.
+    /// Transmit a frame. Goes through the [`TxMirror`], so the frame shows up
+    /// in the trace as a `tx` row (neither backend echoes our own sends).
     pub async fn send(&self, spec: SendSpec) -> Result<()> {
         let id = if spec.extended {
             CanId::new_extended(spec.id).map_err(|e| anyhow!("bad extended id: {e}"))?
@@ -541,20 +599,10 @@ impl CanAnalyzer {
             CanFrame::new_data(id, &spec.data).map_err(|e| anyhow!("build data frame: {e}"))?
         };
 
-        self.bus
+        self.mirror
             .send(frame)
             .await
             .map_err(|e| anyhow!("send: {e}"))?;
-
-        let t_us = self.t0.elapsed().as_micros() as u64;
-        let (data, len): (&[u8], u8) = match frame.kind() {
-            FrameKind::Remote => (&[], frame.dlc() as u8),
-            _ => (frame.data(), frame.data().len() as u8),
-        };
-        self.state
-            .lock()
-            .unwrap()
-            .push(frame.id(), frame.kind(), data, len, t_us, Dir::Tx);
         Ok(())
     }
 

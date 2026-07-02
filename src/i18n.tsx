@@ -87,6 +87,10 @@ const STRINGS = {
   canColSeq: { en: "#", zh: "#" },
   canColTime: { en: "t (ms)", zh: "t (ms)" },
   canColDir: { en: "dir", zh: "方向" },
+  canDirHint: {
+    en: "TX = frames sent by this tool (manual send / SDO tab) — accepted by the driver, not necessarily ACKed on the bus. Everything else is RX; on SocketCAN that includes frames sent by other programs on this machine.",
+    zh: "TX = 本工具发出的帧（手动发帧 / SDO）——表示驱动已接受，不代表总线上已被 ACK。其余一律为 RX；SocketCAN 下本机其他程序发的帧也会以 RX 出现。",
+  },
   canColId: { en: "ID", zh: "ID" },
   canColKind: { en: "decode", zh: "解析" },
   canColDlc: { en: "dlc", zh: "dlc" },

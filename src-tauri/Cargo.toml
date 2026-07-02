@@ -17,6 +17,8 @@ protoc-bin-vendored = "3"   # 自带 protoc,免系统安装
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
+# analyzer.rs 的 TxMirror 要给 can-transport 的 #[async_trait] trait 写 impl。
+async-trait = "0.1"
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
 log = "0.4"

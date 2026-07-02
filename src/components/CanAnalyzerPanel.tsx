@@ -422,7 +422,11 @@ function TraceList({
       <div style={{ display: "flex", padding: "4px 10px", borderBottom: "1px solid #303030", fontSize: 12, color: "#888", fontFamily: "monospace" }}>
         <span style={{ width: 64 }}>{t("canColSeq")}</span>
         <span style={{ width: 84 }}>{t("canColTime")}</span>
-        <span style={{ width: 34 }}>{t("canColDir")}</span>
+        <Tooltip title={t("canDirHint")}>
+          <span style={{ width: 34, cursor: "help", textDecoration: "underline dotted" }}>
+            {t("canColDir")}
+          </span>
+        </Tooltip>
         <span style={{ width: 130 }}>{t("canColId")}</span>
         <span style={{ width: 88 }}>{t("canColKind")}</span>
         <span style={{ width: 34 }}>{t("canColDlc")}</span>
